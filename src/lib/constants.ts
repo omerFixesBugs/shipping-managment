@@ -67,6 +67,21 @@ export const SHIPMENT_STATUS_ORDER: ShipmentStatus[] = [
 
 export const ORIGIN_HUBS: HubType[] = ['dubai', 'china']
 
+// Items can only be changed before the shipment leaves the origin hub.
+export const PRE_TRANSIT_STATUSES: ShipmentStatus[] = ['received_at_origin', 'preparing_export']
+
+export function canManageShipmentItems(
+  status: ShipmentStatus,
+  role: UserRole | undefined,
+  hub: HubType | null | undefined,
+  originHub: HubType
+): boolean {
+  if (!PRE_TRANSIT_STATUSES.includes(status)) return false
+  if (role === 'owner') return true
+  if (role === 'warehouse_manager' && hub === originHub) return true
+  return false
+}
+
 export const FINANCIAL_CATEGORY_LABELS = {
   purchase_cost: 'Purchase Cost',
   shipping_cost: 'Shipping Cost',

@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ShipmentStatusBadge } from '@/components/StatusBadge'
 import { ShipmentTimeline } from '@/components/ShipmentTimeline'
 import { ShipmentItemsManager } from '@/components/ShipmentItemsManager'
-import { HUB_LABELS, ORIGIN_HUBS, SHIPMENT_STATUS_LABELS, getNextShipmentStatuses } from '@/lib/constants'
+import { HUB_LABELS, ORIGIN_HUBS, SHIPMENT_STATUS_LABELS, getNextShipmentStatuses, canManageShipmentItems } from '@/lib/constants'
 import { formatDateTime } from '@/lib/utils'
 import type { HubType, Shipment, ShipmentEvent } from '@/types/database'
 
@@ -161,14 +161,52 @@ export function WarehouseShipmentDetailPage() {
   if (!shipment) return <p className="text-muted-foreground">Loading...</p>
 
   const nextStatuses = getNextShipmentStatuses(shipment.status, profile?.hub ?? null)
-  const canEditItems = profile?.hub === shipment.origin_hub || profile?.hub === shipment.current_hub
+  const canEditItems = canManageShipmentItems(shipment.status, 'warehouse_manager', profile?.hub, shipment.origin_hub)
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">{shipment.reference_code}</h2>
-        <ShipmentStatusBadge status={shipment.status} />
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-4">
+        <div>
+          <h2 className="text-2xl font-bold">{shipment.reference_code}</h2>
+          <p className="text-xs text-muted-foreground">
+            {HUB_LABELS[shipment.origin_hub]} → {HUB_LABELS[shipment.current_hub]}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <ShipmentStatusBadge status={shipment.status} />
+          {nextStatuses.map((status) => (
+            <Button
+              key={status}
+              size="sm"
+              onClick={() => updateStatus.mutate(status)}
+              disabled={updateStatus.isPending}
+            >
+              Mark as {SHIPMENT_STATUS_LABELS[status]}
+            </Button>
+          ))}
+        </div>
       </div>
+
+      <Card>
+        <CardHeader><CardTitle>Products in this Shipment</CardTitle></CardHeader>
+        <CardContent>
+          {!canEditItems && (
+            <p className="mb-3 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+              {shipment.origin_hub === profile?.hub
+                ? 'Products are locked — shipment already dispatched from origin.'
+                : 'View only — only the origin hub and head office can change products.'}
+            </p>
+          )}
+          <ShipmentItemsManager shipmentId={shipment.id} canEdit={canEditItems} originHub={shipment.origin_hub} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Progress</CardTitle></CardHeader>
+        <CardContent>
+          <ShipmentTimeline status={shipment.status} />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader><CardTitle>Details</CardTitle></CardHeader>
@@ -181,44 +219,13 @@ export function WarehouseShipmentDetailPage() {
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>Products in this Shipment</CardTitle></CardHeader>
-        <CardContent>
-          <ShipmentItemsManager shipmentId={shipment.id} canEdit={canEditItems} originHub={shipment.origin_hub} />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>Progress</CardTitle></CardHeader>
-        <CardContent>
-          <ShipmentTimeline status={shipment.status} />
-        </CardContent>
-      </Card>
-
-      {nextStatuses.length > 0 && (
-        <Card>
-          <CardHeader><CardTitle>Update Status</CardTitle></CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            {nextStatuses.map((status) => (
-              <Button
-                key={status}
-                onClick={() => updateStatus.mutate(status)}
-                disabled={updateStatus.isPending}
-              >
-                Mark as {SHIPMENT_STATUS_LABELS[status]}
-              </Button>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
         <CardHeader><CardTitle>Event History</CardTitle></CardHeader>
         <CardContent>
           <ul className="space-y-2 text-sm">
             {events?.map((e) => (
               <li key={e.id} className="flex justify-between border-b py-2">
                 <span>{e.from_status ? `${e.from_status} → ` : ''}{e.to_status}</span>
-                <span className="text-slate-400">{formatDateTime(e.created_at)}</span>
+                <span className="text-muted-foreground">{formatDateTime(e.created_at)}</span>
               </li>
             ))}
           </ul>

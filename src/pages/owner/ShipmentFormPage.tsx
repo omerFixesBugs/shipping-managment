@@ -20,7 +20,7 @@ import { ShipmentTimeline } from '@/components/ShipmentTimeline'
 import { ShipmentItemsManager } from '@/components/ShipmentItemsManager'
 import { PasswordConfirmDialog } from '@/components/PasswordConfirmDialog'
 import { Trash2 } from 'lucide-react'
-import { ORIGIN_HUBS, HUB_LABELS, SHIPMENT_STATUS_LABELS, getNextShipmentStatuses } from '@/lib/constants'
+import { ORIGIN_HUBS, HUB_LABELS, SHIPMENT_STATUS_LABELS, getNextShipmentStatuses, canManageShipmentItems } from '@/lib/constants'
 import { formatDateTime } from '@/lib/utils'
 import type { Client, HubType, Shipment, ShipmentEvent } from '@/types/database'
 
@@ -120,12 +120,54 @@ export function ShipmentFormPage() {
       profile?.role === 'owner' ? shipment.current_hub : profile?.hub ?? null
     )
 
+    const canEditItems = canManageShipmentItems(shipment.status, 'owner', null, shipment.origin_hub)
+
     return (
       <div className="mx-auto max-w-3xl space-y-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-bold">{shipment.reference_code}</h2>
-          <ShipmentStatusBadge status={shipment.status} />
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-4">
+          <div>
+            <h2 className="text-2xl font-bold">{shipment.reference_code}</h2>
+            <p className="text-xs text-muted-foreground">
+              {HUB_LABELS[shipment.origin_hub]} → {HUB_LABELS[shipment.current_hub]}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <ShipmentStatusBadge status={shipment.status} />
+            {nextStatuses.map((status) => (
+              <Button
+                key={status}
+                size="sm"
+                onClick={() => updateStatus.mutate(status)}
+                disabled={updateStatus.isPending}
+              >
+                Mark as {SHIPMENT_STATUS_LABELS[status]}
+              </Button>
+            ))}
+          </div>
         </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Products in this Shipment</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {!canEditItems && (
+              <p className="mb-3 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                Products are locked — shipment already dispatched from origin.
+              </p>
+            )}
+            <ShipmentItemsManager shipmentId={shipment.id} canEdit={canEditItems} originHub={shipment.origin_hub} />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Progress</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ShipmentTimeline status={shipment.status} />
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
@@ -139,43 +181,6 @@ export function ShipmentFormPage() {
             <p><strong>Weight:</strong> {shipment.weight_kg ? `${shipment.weight_kg} kg` : '—'}</p>
           </CardContent>
         </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Products in this Shipment</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ShipmentItemsManager shipmentId={shipment.id} canEdit={true} originHub={shipment.origin_hub} />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Progress</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ShipmentTimeline status={shipment.status} />
-          </CardContent>
-        </Card>
-
-        {nextStatuses.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Update Status</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-wrap gap-2">
-              {nextStatuses.map((status) => (
-                <Button
-                  key={status}
-                  onClick={() => updateStatus.mutate(status)}
-                  disabled={updateStatus.isPending}
-                >
-                  Mark as {SHIPMENT_STATUS_LABELS[status]}
-                </Button>
-              ))}
-            </CardContent>
-          </Card>
-        )}
 
         <Card>
           <CardHeader>
