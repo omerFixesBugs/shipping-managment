@@ -67,6 +67,13 @@ export const SHIPMENT_STATUS_ORDER: ShipmentStatus[] = [
 
 export const ORIGIN_HUBS: HubType[] = ['dubai', 'china']
 
+export const ALL_HUBS: HubType[] = ['dubai', 'china', 'bangladesh']
+
+/** Destination hubs available from a given origin (excludes origin). */
+export function getDestinationHubs(origin: HubType): HubType[] {
+  return ALL_HUBS.filter((h) => h !== origin)
+}
+
 // Items can only be changed before the shipment leaves the origin hub.
 export const PRE_TRANSIT_STATUSES: ShipmentStatus[] = ['received_at_origin', 'preparing_export']
 

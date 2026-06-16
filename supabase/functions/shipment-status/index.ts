@@ -148,6 +148,25 @@ async function handleProcurementStatus(supabase: any, body: { requestId: string;
           `LogiFlow: New procurement request "${request.title}" awaiting your quote.`)
       }
     }
+
+    // If a BD admin (non-owner) raised this request, keep owners in the loop.
+    let requesterRole: string | null = null
+    if (request.requested_by) {
+      const reqProfile = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', request.requested_by)
+        .single()
+      requesterRole = reqProfile.data?.role ?? null
+    }
+    if (requesterRole && requesterRole !== 'owner') {
+      const owners = await supabase.from('profiles').select('id, phone').eq('role', 'owner')
+      for (const owner of owners.data ?? []) {
+        await createNotification(supabase, owner.id, 'New BD Procurement Request',
+          `A new procurement request "${request.title}" was raised for the ${request.target_hub} hub.`,
+          `/owner/procurement/${requestId}`)
+      }
+    }
   }
 
   if (newStatus === 'quoted') {

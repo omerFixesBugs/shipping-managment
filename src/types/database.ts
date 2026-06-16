@@ -10,6 +10,7 @@ export type ProcurementStatus =
   | 'ready_to_ship'
 export type QuoteStatus = 'pending' | 'accepted' | 'rejected'
 export type ShipmentType = 'client_owned' | 'business_sourced'
+export type InventoryStatus = 'in_storage' | 'shipped'
 export type ShipmentStatus =
   | 'received_at_origin'
   | 'preparing_export'
@@ -56,6 +57,10 @@ export interface ProcurementItem {
   sourceUrl?: string
   /** Optional reference image URLs (stored in the `product-images` bucket). */
   images?: string[]
+  /** Optional deadline by which client needs this product (ISO date string). */
+  deadline?: string | null
+  /** Owner's expected selling price for this product. */
+  expectedSellingPrice?: number | null
 }
 
 export interface ProcurementRequest {
@@ -66,9 +71,33 @@ export interface ProcurementRequest {
   title: string
   items: ProcurementItem[]
   notes: string | null
+  client_id: string | null
+  shipment_type: ShipmentType
+  requested_by: string | null
   created_at: string
   updated_at: string
   quotes?: Quote[]
+  clients?: { name: string } | null
+}
+
+export interface WarehouseInventory {
+  id: string
+  hub: HubType
+  client_id: string | null
+  name: string
+  quantity: number
+  unit: string | null
+  weight_kg: number | null
+  volume_cbm: number | null
+  notes: string | null
+  source_url: string | null
+  images: string[]
+  status: InventoryStatus
+  shipment_id: string | null
+  added_by: string | null
+  created_at: string
+  updated_at: string
+  clients?: { name: string } | null
 }
 
 export interface Quote {
@@ -90,10 +119,16 @@ export interface Shipment {
   client_id: string | null
   type: ShipmentType
   origin_hub: HubType
+  destination_hub: HubType | null
   current_hub: HubType
   status: ShipmentStatus
   description: string | null
   weight_kg: number | null
+  volume_cbm: number | null
+  max_item_quantity: number | null
+  ship_date: string | null
+  container_name: string | null
+  shipping_method: string | null
   procurement_request_id: string | null
   created_by: string | null
   created_at: string
@@ -107,6 +142,8 @@ export interface ShipmentItem {
   name: string
   quantity: number
   unit: string | null
+  weight_kg: number | null
+  volume_cbm: number | null
   notes: string | null
   source_url: string | null
   images: string[]

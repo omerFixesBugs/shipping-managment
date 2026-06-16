@@ -1,50 +1,26 @@
-import { useState, type ReactNode } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useState } from 'react'
+import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { PageHeader } from '@/components/ui/page-header'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Label } from '@/components/ui/label'
 import { ShipmentStatusBadge } from '@/components/StatusBadge'
 import { ShipmentTimeline } from '@/components/ShipmentTimeline'
 import { ShipmentItemsManager } from '@/components/ShipmentItemsManager'
 import { PasswordConfirmDialog } from '@/components/PasswordConfirmDialog'
 import { Trash2 } from 'lucide-react'
-import { ORIGIN_HUBS, HUB_LABELS, SHIPMENT_STATUS_LABELS, getNextShipmentStatuses, canManageShipmentItems } from '@/lib/constants'
+import { HUB_LABELS, SHIPMENT_STATUS_LABELS, getNextShipmentStatuses, canManageShipmentItems } from '@/lib/constants'
 import { formatDateTime } from '@/lib/utils'
-import type { Client, HubType, Shipment, ShipmentEvent } from '@/types/database'
+import type { Shipment, ShipmentEvent } from '@/types/database'
 
 export function ShipmentFormPage() {
   const { id } = useParams()
   const isNew = !id || id === 'new'
-  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { user, profile } = useAuth()
-
-  const [clientId, setClientId] = useState('')
-  const [originHub, setOriginHub] = useState<HubType>('dubai')
-  const [description, setDescription] = useState('')
-  const [weightKg, setWeightKg] = useState('')
-
-  const { data: clients } = useQuery({
-    queryKey: ['clients'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('clients').select('*').order('name')
-      if (error) throw error
-      return data as Client[]
-    },
-  })
 
   const { data: shipment } = useQuery({
     queryKey: ['shipment', id],
@@ -74,26 +50,6 @@ export function ShipmentFormPage() {
     enabled: !isNew,
   })
 
-  const createShipment = useMutation({
-    mutationFn: async () => {
-      const { data, error } = await supabase
-        .from('shipments')
-        .insert({
-          client_id: clientId || null,
-          type: 'client_owned',
-          origin_hub: originHub,
-          current_hub: originHub,
-          description: description || null,
-          weight_kg: weightKg ? Number(weightKg) : null,
-          created_by: user!.id,
-        })
-        .select()
-        .single()
-      if (error) throw error
-      return data
-    },
-    onSuccess: (data) => navigate(`/owner/shipments/${data.id}`),
-  })
 
   const updateStatus = useMutation({
     mutationFn: async (newStatus: string) => {
@@ -114,6 +70,10 @@ export function ShipmentFormPage() {
       queryClient.invalidateQueries({ queryKey: ['shipments'] })
     },
   })
+
+  if (isNew) {
+    return <Navigate to="/owner/shipments" replace />
+  }
 
   if (!isNew && shipment) {
     const nextStatuses = getNextShipmentStatuses(
@@ -208,83 +168,12 @@ export function ShipmentFormPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      <PageHeader
-        title="Add New Shipment"
-        description="Register a new shipment and assign cargo after creation."
-      />
-      <Card className="shadow-[var(--shadow-card)]">
-        <CardContent className="space-y-6 p-6">
-          <FormSection title="Origin & Destination">
-            <div className="space-y-2">
-              <Label>Origin Hub</Label>
-              <Select value={originHub} onValueChange={(v) => setOriginHub(v as HubType)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {ORIGIN_HUBS.map((h) => (
-                    <SelectItem key={h} value={h}>{HUB_LABELS[h]}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">Destination defaults to Bangladesh.</p>
-            </div>
-          </FormSection>
-
-          <FormSection title="Client Information">
-            <div className="space-y-2">
-              <Label>Primary Client <span className="text-xs text-muted-foreground">(optional)</span></Label>
-              <Select value={clientId || '__none__'} onValueChange={(v) => setClientId(v === '__none__' ? '' : v)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="None — multi-client shipment" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">None — multi-client shipment</SelectItem>
-                  {clients?.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">Add products and assign each to its client after creating.</p>
-            </div>
-          </FormSection>
-
-          <FormSection title="Cargo Details">
-            <div className="space-y-2">
-              <Label>Description</Label>
-              <Textarea value={description} onChange={(e) => setDescription(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>Weight (kg)</Label>
-              <Input type="number" value={weightKg} onChange={(e) => setWeightKg(e.target.value)} />
-            </div>
-          </FormSection>
-
-          <div className="flex justify-end gap-2 border-t pt-4">
-            <Button variant="outline" onClick={() => navigate('/owner/shipments')}>
-              Cancel
-            </Button>
-            <Button onClick={() => createShipment.mutate()} disabled={createShipment.isPending}>
-              Create Shipment
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+    <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
+      Loading shipment…
     </div>
   )
 }
 
-function FormSection({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="space-y-4">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-brand)]">
-        {title}
-      </h3>
-      {children}
-    </section>
-  )
-}
 
 function OwnerShipmentControls({ shipment }: { shipment: Shipment }) {
   const navigate = useNavigate()

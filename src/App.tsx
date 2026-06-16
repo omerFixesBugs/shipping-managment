@@ -25,8 +25,8 @@ import {
   WarehouseShipmentsListPage,
   WarehouseShipmentDetailPage,
 } from '@/pages/warehouse/WarehouseShipmentsPage'
-import { WarehouseShipmentCreatePage } from '@/pages/warehouse/WarehouseShipmentCreatePage'
 import { WarehouseClientsPage } from '@/pages/warehouse/WarehouseClientsPage'
+import { WarehouseStoragePage } from '@/pages/warehouse/WarehouseStoragePage'
 import { ClientPortal, ClientShipmentDetail } from '@/pages/client/ClientPortal'
 
 const queryClient = new QueryClient({
@@ -150,6 +150,14 @@ export default function App() {
                 }
               />
               <Route
+                path="/warehouse/procurement/new"
+                element={
+                  <ProtectedRoute allowedRoles={['warehouse_manager']}>
+                    <ProcurementFormPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
                 path="/warehouse/procurement/:id"
                 element={
                   <ProtectedRoute allowedRoles={['warehouse_manager']}>
@@ -167,17 +175,21 @@ export default function App() {
               />
               <Route
                 path="/warehouse/shipments/new"
-                element={
-                  <ProtectedRoute allowedRoles={['warehouse_manager']}>
-                    <WarehouseShipmentCreatePage />
-                  </ProtectedRoute>
-                }
+                element={<Navigate to="/warehouse/shipments" replace />}
               />
               <Route
                 path="/warehouse/shipments/:id"
                 element={
                   <ProtectedRoute allowedRoles={['warehouse_manager']}>
                     <WarehouseShipmentDetailPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/warehouse/storage"
+                element={
+                  <ProtectedRoute allowedRoles={['warehouse_manager']}>
+                    <WarehouseStoragePage />
                   </ProtectedRoute>
                 }
               />

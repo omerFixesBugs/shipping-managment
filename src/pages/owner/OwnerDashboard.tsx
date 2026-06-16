@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import {
@@ -16,6 +17,7 @@ import { PageHeader } from '@/components/ui/page-header'
 import { StatCard } from '@/components/ui/stat-card'
 import { formatCurrency, formatDateTime } from '@/lib/utils'
 import { ShipmentStatusBadge } from '@/components/StatusBadge'
+import { AddShipmentDialog } from '@/components/AddShipmentDialog'
 import {
   HUB_LABELS,
   SHIPMENT_STATUS_LABELS,
@@ -31,6 +33,7 @@ import type {
 const HUBS: HubType[] = ['dubai', 'china', 'bangladesh']
 
 export function OwnerDashboard() {
+  const [addShipmentOpen, setAddShipmentOpen] = useState(false)
   const { data: stats } = useQuery({
     queryKey: ['owner-dashboard-stats'],
     queryFn: async () => {
@@ -121,6 +124,7 @@ export function OwnerDashboard() {
 
   return (
     <div className="space-y-6">
+      <AddShipmentDialog open={addShipmentOpen} onOpenChange={setAddShipmentOpen} />
       <PageHeader
         title="Operations Overview"
         description="Real-time telemetry and performance metrics across global hubs."
@@ -131,10 +135,8 @@ export function OwnerDashboard() {
                 <ShoppingCart className="h-4 w-4" /> New Request
               </Link>
             </Button>
-            <Button variant="outline" asChild>
-              <Link to="/owner/shipments/new">
-                <Truck className="h-4 w-4" /> New Shipment
-              </Link>
+            <Button variant="outline" onClick={() => setAddShipmentOpen(true)}>
+              <Truck className="h-4 w-4" /> New Shipment
             </Button>
           </>
         }

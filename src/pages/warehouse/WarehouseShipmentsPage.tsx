@@ -1,4 +1,5 @@
-import { Link, useParams } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { Link, useParams, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Package, Plus } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -8,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ShipmentStatusBadge } from '@/components/StatusBadge'
 import { ShipmentTimeline } from '@/components/ShipmentTimeline'
 import { ShipmentItemsManager } from '@/components/ShipmentItemsManager'
+import { AddShipmentDialog } from '@/components/AddShipmentDialog'
 import { HUB_LABELS, ORIGIN_HUBS, SHIPMENT_STATUS_LABELS, getNextShipmentStatuses, canManageShipmentItems } from '@/lib/constants'
 import { formatDateTime } from '@/lib/utils'
 import type { HubType, Shipment, ShipmentEvent } from '@/types/database'
@@ -57,6 +59,16 @@ export function WarehouseShipmentsListPage() {
   const { profile } = useAuth()
   const hub = profile?.hub
   const isBD = hub === 'bangladesh'
+  const locationState = useLocation().state as { openCreate?: boolean } | null
+  const [addOpen, setAddOpen] = useState(false)
+
+  useEffect(() => {
+    if (locationState?.openCreate) {
+      setAddOpen(true)
+      // Clear state so re-visits don't re-open
+      window.history.replaceState({}, '')
+    }
+  }, [locationState?.openCreate])
 
   const { data: shipments } = useQuery({
     queryKey: ['warehouse-shipments-list', hub],
@@ -74,11 +86,14 @@ export function WarehouseShipmentsListPage() {
 
   return (
     <div className="space-y-6">
+      <AddShipmentDialog open={addOpen} onOpenChange={setAddOpen} />
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold">Shipments</h2>
-        <Button asChild size="sm">
-          <Link to="/warehouse/shipments/new"><Plus className="mr-1 h-4 w-4" />New Shipment</Link>
-        </Button>
+        {!isBD && (
+          <Button size="sm" onClick={() => setAddOpen(true)}>
+            <Plus className="mr-1 h-4 w-4" />New Shipment
+          </Button>
+        )}
       </div>
 
       {isBD ? (

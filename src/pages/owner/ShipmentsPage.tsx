@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { PageHeader } from '@/components/ui/page-header'
 import { ShipmentStatusBadge } from '@/components/StatusBadge'
+import { AddShipmentDialog } from '@/components/AddShipmentDialog'
 import {
   HUB_LABELS,
   SHIPMENT_STATUS_LABELS,
@@ -39,6 +40,7 @@ export function ShipmentsPage() {
   const [tab, setTab] = useState<RouteTab>('all')
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [addOpen, setAddOpen] = useState(false)
 
   const { data: shipments, isLoading } = useQuery({
     queryKey: ['shipments-tracking'],
@@ -85,6 +87,7 @@ export function ShipmentsPage() {
 
   return (
     <div className="space-y-6">
+      <AddShipmentDialog open={addOpen} onOpenChange={setAddOpen} />
       <PageHeader
         title="Active Shipments"
         description="Real-time tracking of client and business-sourced cargo."
@@ -93,10 +96,8 @@ export function ShipmentsPage() {
             <Button variant="outline" onClick={exportCsv}>
               <Download className="h-4 w-4" /> Export
             </Button>
-            <Button asChild>
-              <Link to="/owner/shipments/new">
-                <Truck className="h-4 w-4" /> New Shipment
-              </Link>
+            <Button onClick={() => setAddOpen(true)}>
+              <Truck className="h-4 w-4" /> New Shipment
             </Button>
           </>
         }
