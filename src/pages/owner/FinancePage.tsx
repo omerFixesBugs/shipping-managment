@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { PageHeader } from '@/components/ui/page-header'
+import { StatCard } from '@/components/ui/stat-card'
 import {
   Select,
   SelectContent,
@@ -100,41 +102,40 @@ export function FinancePage() {
     a.click()
   }
 
+  const margin = totals.revenue ? Math.round((totals.profit / totals.revenue) * 100) : 0
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Finance & P&L</h2>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={exportCsv}>Export CSV</Button>
-          <Button onClick={() => setShowForm(!showForm)}>Add Entry</Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Financial Reporting"
+        description="Profit/Loss and cost analysis across global hubs."
+        actions={
+          <>
+            <Button variant="outline" onClick={exportCsv}>Export CSV</Button>
+            <Button onClick={() => setShowForm(!showForm)}>Add Entry</Button>
+          </>
+        }
+      />
 
       <div className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-slate-500">Revenue</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-emerald-600">{formatCurrency(totals.revenue)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-slate-500">Costs</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-red-600">{formatCurrency(totals.costs)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-slate-500">Profit</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{formatCurrency(totals.profit)}</p>
-          </CardContent>
-        </Card>
+        <StatCard
+          label="Total Revenue"
+          value={formatCurrency(totals.revenue)}
+          mono
+          trend={{ value: 'gross income', direction: 'up' }}
+        />
+        <StatCard
+          label="Total Costs"
+          value={formatCurrency(totals.costs)}
+          mono
+          trend={{ value: 'purchase + freight + duty', direction: 'down' }}
+        />
+        <StatCard
+          label="Net Profit"
+          value={formatCurrency(totals.profit)}
+          mono
+          hint={`Margin ${margin}%`}
+        />
       </div>
 
       {showForm && (

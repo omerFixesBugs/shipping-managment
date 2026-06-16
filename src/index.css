@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import 'tailwindcss';
 
 @custom-variant dark (&:where(.dark, .dark *));
@@ -22,7 +23,19 @@
   --color-border: #e2e8f0;
   --color-input: #e2e8f0;
   --color-ring: #0f172a;
+  /* Action blue — primary interactive accent across the Logistics OS shell. */
+  --color-brand: #2563eb;
+  --color-brand-foreground: #ffffff;
+  --color-brand-soft: #eff4ff;
+  /* Sidebar (always dark navy "command" surface). */
+  --color-sidebar: #0f172a;
+  --color-sidebar-foreground: #cbd5e1;
+  --color-sidebar-muted: #64748b;
+  --color-sidebar-border: #1e293b;
   --radius: 0.5rem;
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 /* Dark theme: override the design tokens so every token-based utility adapts. */
@@ -61,8 +74,18 @@
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--font-sans);
   background-color: var(--color-background);
   color: var(--color-foreground);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Tabular monospace for data points: tracking codes, SKUs, money, metrics. */
+.font-data {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
 }

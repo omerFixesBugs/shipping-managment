@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { PageHeader } from '@/components/ui/page-header'
 import {
   Select,
   SelectContent,
@@ -208,51 +209,80 @@ export function ShipmentFormPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
-      <h2 className="text-2xl font-bold">New Shipment</h2>
-      <Card>
-        <CardContent className="space-y-4 pt-6">
-          <div className="space-y-2">
-            <Label>Primary Client <span className="text-xs text-muted-foreground">(optional)</span></Label>
-            <Select value={clientId || '__none__'} onValueChange={(v) => setClientId(v === '__none__' ? '' : v)}>
-              <SelectTrigger>
-                <SelectValue placeholder="None — multi-client shipment" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">None — multi-client shipment</SelectItem>
-                {clients?.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">Add products and assign each to its client after creating.</p>
+      <PageHeader
+        title="Add New Shipment"
+        description="Register a new shipment and assign cargo after creation."
+      />
+      <Card className="shadow-[var(--shadow-card)]">
+        <CardContent className="space-y-6 p-6">
+          <FormSection title="Origin & Destination">
+            <div className="space-y-2">
+              <Label>Origin Hub</Label>
+              <Select value={originHub} onValueChange={(v) => setOriginHub(v as HubType)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ORIGIN_HUBS.map((h) => (
+                    <SelectItem key={h} value={h}>{HUB_LABELS[h]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Destination defaults to Bangladesh.</p>
+            </div>
+          </FormSection>
+
+          <FormSection title="Client Information">
+            <div className="space-y-2">
+              <Label>Primary Client <span className="text-xs text-muted-foreground">(optional)</span></Label>
+              <Select value={clientId || '__none__'} onValueChange={(v) => setClientId(v === '__none__' ? '' : v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="None — multi-client shipment" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">None — multi-client shipment</SelectItem>
+                  {clients?.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Add products and assign each to its client after creating.</p>
+            </div>
+          </FormSection>
+
+          <FormSection title="Cargo Details">
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Textarea value={description} onChange={(e) => setDescription(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Weight (kg)</Label>
+              <Input type="number" value={weightKg} onChange={(e) => setWeightKg(e.target.value)} />
+            </div>
+          </FormSection>
+
+          <div className="flex justify-end gap-2 border-t pt-4">
+            <Button variant="outline" onClick={() => navigate('/owner/shipments')}>
+              Cancel
+            </Button>
+            <Button onClick={() => createShipment.mutate()} disabled={createShipment.isPending}>
+              Create Shipment
+            </Button>
           </div>
-          <div className="space-y-2">
-            <Label>Origin Hub</Label>
-            <Select value={originHub} onValueChange={(v) => setOriginHub(v as HubType)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {ORIGIN_HUBS.map((h) => (
-                  <SelectItem key={h} value={h}>{HUB_LABELS[h]}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Description</Label>
-            <Textarea value={description} onChange={(e) => setDescription(e.target.value)} />
-          </div>
-          <div className="space-y-2">
-            <Label>Weight (kg)</Label>
-            <Input type="number" value={weightKg} onChange={(e) => setWeightKg(e.target.value)} />
-          </div>
-          <Button onClick={() => createShipment.mutate()} disabled={createShipment.isPending}>
-            Create Shipment
-          </Button>
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+function FormSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-4">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-brand)]">
+        {title}
+      </h3>
+      {children}
+    </section>
   )
 }
 

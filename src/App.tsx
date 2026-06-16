@@ -15,6 +15,7 @@ import { ShipmentFormPage } from '@/pages/owner/ShipmentFormPage'
 import { FinancePage } from '@/pages/owner/FinancePage'
 import { EmployeesPage } from '@/pages/owner/EmployeesPage'
 import { HubOverviewPage } from '@/pages/owner/HubOverviewPage'
+import { HubDetailPage } from '@/pages/owner/HubDetailPage'
 import { WarehouseDashboard } from '@/pages/warehouse/WarehouseDashboard'
 import {
   WarehouseProcurementListPage,
@@ -120,6 +121,14 @@ export default function App() {
                 element={
                   <ProtectedRoute allowedRoles={['owner']}>
                     <HubOverviewPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/owner/hubs/:hubId"
+                element={
+                  <ProtectedRoute allowedRoles={['owner']}>
+                    <HubDetailPage />
                   </ProtectedRoute>
                 }
               />

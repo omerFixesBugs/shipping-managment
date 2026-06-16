@@ -1,163 +1,187 @@
-import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Package } from 'lucide-react'
+import { ArrowRight, Boxes, Mail, MapPin, Phone, User } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select'
-import { ShipmentStatusBadge } from '@/components/StatusBadge'
-import { HUB_LABELS, HUB_THEMES, SHIPMENT_STATUS_LABELS, SHIPMENT_STATUS_ORDER } from '@/lib/constants'
-import { formatDateTime } from '@/lib/utils'
+import { Card, CardContent } from '@/components/ui/card'
+import { PageHeader } from '@/components/ui/page-header'
+import { StatCard } from '@/components/ui/stat-card'
+import { HUB_LABELS, HUB_THEMES } from '@/lib/constants'
 import { cn } from '@/lib/utils'
-import type { HubType, Shipment, ShipmentStatus } from '@/types/database'
-
-type HubShipment = Shipment & {
-  clients: { name: string } | null
-  creator: { full_name: string } | null
-  shipment_items: { id: string; name: string; quantity: number; unit: string | null }[]
-}
+import type { HubType, Profile, Shipment } from '@/types/database'
 
 const HUBS: HubType[] = ['dubai', 'china', 'bangladesh']
 
-export function HubOverviewPage() {
-  const [hub, setHub] = useState<HubType>('dubai')
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+const HUB_LOCATION: Record<HubType, string> = {
+  dubai: 'Jebel Ali Free Zone, Dubai, UAE',
+  china: 'Yantian Port District, Shenzhen, China',
+  bangladesh: 'DEPZ Area, Savar, Dhaka, Bangladesh',
+}
 
-  const { data: shipments, isLoading } = useQuery({
-    queryKey: ['hub-overview', hub],
+type HubManager = Pick<Profile, 'id' | 'full_name' | 'position' | 'phone' | 'hub'>
+
+export function HubOverviewPage() {
+  const { data: shipments } = useQuery({
+    queryKey: ['hub-overview-shipments'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('shipments')
-        .select('*, clients(name), creator:profiles!shipments_created_by_fkey(full_name), shipment_items(id, name, quantity, unit)')
-        .or(`origin_hub.eq.${hub},current_hub.eq.${hub}`)
-        .order('updated_at', { ascending: false })
+        .select('id, status, current_hub, origin_hub')
       if (error) throw error
-      return data as HubShipment[]
+      return data as Pick<Shipment, 'id' | 'status' | 'current_hub' | 'origin_hub'>[]
     },
   })
 
-  const toggle = (id: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
+  const { data: managers } = useQuery({
+    queryKey: ['hub-managers'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, full_name, position, phone, hub')
+        .eq('role', 'warehouse_manager')
+        .order('full_name')
+      if (error) throw error
+      return data as HubManager[]
+    },
+  })
 
-  const statusCounts = SHIPMENT_STATUS_ORDER.map((s) => ({
-    status: s,
-    count: shipments?.filter((sh) => sh.status === s).length ?? 0,
-  }))
-
-  const inProcess = shipments?.filter((s) => s.status !== 'delivered').length ?? 0
-  const theme = HUB_THEMES[hub]
+  const totalActive =
+    shipments?.filter((s) => s.status !== 'delivered').length ?? 0
+  const delivered = shipments?.filter((s) => s.status === 'delivered').length ?? 0
+  const efficiency =
+    shipments?.length ? Math.round((delivered / shipments.length) * 100) : 0
 
   return (
-    <div
-      className="space-y-6"
-      style={{ ['--hub' as string]: theme.accent, ['--hub-soft' as string]: theme.accentSoft }}
-    >
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Hub Overview</h2>
-        <Select value={hub} onValueChange={(v) => setHub(v as HubType)}>
-          <SelectTrigger className="w-48">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {HUBS.map((h) => (
-              <SelectItem key={h} value={h}>{HUB_LABELS[h]}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+    <div className="space-y-6">
+      <PageHeader
+        title="Hub Management"
+        description="Global overview of all active warehouse facilities."
+      />
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard label="Active Shipments" value={totalActive} icon={Boxes} hint="across all hubs" />
+        <StatCard label="Operational Hubs" value={HUBS.length} icon={MapPin} hint="Dubai · China · Dhaka" />
+        <StatCard
+          label="Delivery Efficiency"
+          value={`${efficiency}%`}
+          mono
+          trend={{ value: `${delivered} delivered`, direction: 'up' }}
+        />
       </div>
 
-      {/* Status summary */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
-        <Card style={{ backgroundColor: 'var(--hub-soft)' }}>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">In Process</p>
-            <p className="text-2xl font-bold" style={{ color: 'var(--hub)' }}>{inProcess}</p>
-          </CardContent>
-        </Card>
-        {statusCounts.map(({ status, count }) => (
-          <Card key={status}>
-            <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground">{SHIPMENT_STATUS_LABELS[status]}</p>
-              <p className="text-2xl font-bold">{count}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      <div className="grid gap-6 lg:grid-cols-3">
+        {HUBS.map((hub) => {
+          const theme = HUB_THEMES[hub]
+          const hubShipments = shipments?.filter((s) => s.current_hub === hub) ?? []
+          const active = hubShipments.filter((s) => s.status !== 'delivered').length
+          const hubManagers = managers?.filter((m) => m.hub === hub) ?? []
+          const isBusy = active >= 8
+          return (
+            <Card key={hub} className="flex flex-col overflow-hidden shadow-[var(--shadow-card)]">
+              {/* Banner */}
+              <div
+                className="relative p-5 text-white"
+                style={{ backgroundColor: theme.accent }}
+              >
+                <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide">
+                  {hub === 'bangladesh' ? 'Destination' : 'Origin'}
+                </span>
+                <h3 className="mt-2 text-lg font-bold">{HUB_LABELS[hub]} Hub</h3>
+                <p className="text-xs text-white/80">{HUB_LOCATION[hub]}</p>
+              </div>
 
-      {/* Shipments + products */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{HUB_LABELS[hub]} Shipments</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <p className="text-muted-foreground">Loading…</p>
-          ) : shipments?.length === 0 ? (
-            <p className="text-muted-foreground">No shipments at this hub.</p>
-          ) : (
-            <div className="space-y-2">
-              {shipments?.map((s) => {
-                const isOpen = expanded.has(s.id)
-                return (
-                  <div key={s.id} className="rounded-lg border">
-                    <button
-                      type="button"
-                      onClick={() => toggle(s.id)}
-                      className="flex w-full items-center gap-3 p-3 text-left hover:bg-accent"
-                    >
-                      {isOpen ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <Link
-                            to={`/owner/shipments/${s.id}`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="font-medium hover:underline"
-                            style={{ color: 'var(--hub)' }}
-                          >
-                            {s.reference_code}
-                          </Link>
-                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                            <Package className="h-3 w-3" />{s.shipment_items?.length ?? 0}
-                          </span>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          {s.clients?.name ?? '—'} · {HUB_LABELS[s.origin_hub]} → {HUB_LABELS[s.current_hub]} · added by {s.creator?.full_name ?? '—'}
-                        </p>
-                      </div>
-                      <ShipmentStatusBadge status={s.status as ShipmentStatus} />
-                    </button>
-
-                    {isOpen && (
-                      <div className="border-t bg-muted/30 p-3">
-                        {s.shipment_items?.length ? (
-                          <ul className="space-y-1">
-                            {s.shipment_items.map((it) => (
-                              <li key={it.id} className={cn('flex justify-between text-sm')}>
-                                <span>{it.name}</span>
-                                <span className="text-muted-foreground">{it.quantity} {it.unit}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="text-sm text-muted-foreground">No products listed in this shipment.</p>
-                        )}
-                        <p className="mt-2 text-[11px] text-muted-foreground">
-                          Created {formatDateTime(s.created_at)} · Updated {formatDateTime(s.updated_at)}
-                        </p>
-                      </div>
-                    )}
+              <CardContent className="flex flex-1 flex-col gap-4 p-5">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg bg-muted/40 p-3">
+                    <p className="text-xs text-muted-foreground">Active Shipments</p>
+                    <p className="font-data text-xl font-bold">{active}</p>
                   </div>
-                )
-              })}
-            </div>
+                  <div className="rounded-lg bg-muted/40 p-3">
+                    <p className="text-xs text-muted-foreground">Total Handled</p>
+                    <p className="font-data text-xl font-bold">{hubShipments.length}</p>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Hub Personnel
+                  </p>
+                  {hubManagers.length ? (
+                    <ul className="space-y-2">
+                      {hubManagers.map((m) => (
+                        <li key={m.id} className="flex items-center gap-2 text-sm">
+                          <span
+                            className="flex h-7 w-7 items-center justify-center rounded-full text-white"
+                            style={{ backgroundColor: theme.accent }}
+                          >
+                            <User className="h-3.5 w-3.5" />
+                          </span>
+                          <div className="min-w-0">
+                            <p className="truncate font-medium">{m.full_name}</p>
+                            <p className="truncate text-xs text-muted-foreground">
+                              {m.position ?? 'Hub Manager'}
+                            </p>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No manager assigned.</p>
+                  )}
+                </div>
+
+                <div className="mt-auto flex items-center justify-between border-t pt-4">
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-1.5 text-xs font-semibold',
+                      isBusy ? 'text-amber-600' : 'text-emerald-600'
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'h-2 w-2 rounded-full',
+                        isBusy ? 'bg-amber-500' : 'bg-emerald-500'
+                      )}
+                    />
+                    {isBusy ? 'High Load' : 'Operational'}
+                  </span>
+                  <Link
+                    to={`/owner/hubs/${hub}`}
+                    className="inline-flex items-center gap-1 text-sm font-semibold text-[var(--color-brand)] hover:underline"
+                  >
+                    View Dashboard <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </div>
+              </CardContent>
+            </Card>
+          )
+        })}
+      </div>
+
+      {/* Contact directory */}
+      <Card className="shadow-[var(--shadow-card)]">
+        <CardContent className="p-5">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Manager Directory
+          </p>
+          {managers?.length ? (
+            <ul className="divide-y">
+              {managers.map((m) => (
+                <li key={m.id} className="flex flex-wrap items-center gap-x-6 gap-y-1 py-2.5 text-sm">
+                  <span className="w-40 font-medium">{m.full_name}</span>
+                  <span className="text-muted-foreground">{m.hub ? HUB_LABELS[m.hub] : '—'}</span>
+                  {m.phone ? (
+                    <span className="inline-flex items-center gap-1 text-muted-foreground">
+                      <Phone className="h-3.5 w-3.5" /> {m.phone}
+                    </span>
+                  ) : null}
+                  <span className="inline-flex items-center gap-1 text-muted-foreground">
+                    <Mail className="h-3.5 w-3.5" /> {m.position ?? 'Hub Manager'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">No managers found.</p>
           )}
         </CardContent>
       </Card>

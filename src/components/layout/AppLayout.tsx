@@ -6,6 +6,8 @@ import {
   LogOut,
   Moon,
   Package,
+  Plus,
+  Ship,
   ShoppingCart,
   Sun,
   Truck,
@@ -15,7 +17,6 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { useTheme } from '@/hooks/useTheme'
-import { Button } from '@/components/ui/button'
 import { NotificationBell } from '@/components/layout/NotificationBell'
 import { cn } from '@/lib/utils'
 import { getWorkspaceTheme } from '@/lib/constants'
@@ -30,12 +31,12 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: 'Dashboard', href: '/owner', icon: LayoutDashboard, roles: ['owner'] },
+  { label: 'Operations Overview', href: '/owner', icon: LayoutDashboard, roles: ['owner'] },
   { label: 'Procurement', href: '/owner/procurement', icon: ShoppingCart, roles: ['owner'] },
-  { label: 'Shipments', href: '/owner/shipments', icon: Truck, roles: ['owner'] },
-  { label: 'Hub Overview', href: '/owner/hubs', icon: Globe, roles: ['owner'] },
+  { label: 'Logistics Tracking', href: '/owner/shipments', icon: Truck, roles: ['owner'] },
+  { label: 'Warehouse Hubs', href: '/owner/hubs', icon: Globe, roles: ['owner'] },
   { label: 'Clients', href: '/owner/clients', icon: Users, roles: ['owner'] },
-  { label: 'Finance', href: '/owner/finance', icon: DollarSign, roles: ['owner'] },
+  { label: 'Financial Reports', href: '/owner/finance', icon: DollarSign, roles: ['owner'] },
   { label: 'Employees', href: '/owner/employees', icon: UserCog, roles: ['owner'] },
   { label: 'Hub Dashboard', href: '/warehouse', icon: Box, roles: ['warehouse_manager'] },
   { label: 'Procurement', href: '/warehouse/procurement', icon: ShoppingCart, roles: ['warehouse_manager'] },
@@ -44,6 +45,27 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'My Shipments', href: '/client', icon: Package, roles: ['client'] },
 ]
 
+interface SidebarCta {
+  label: string
+  href: string
+}
+
+const SIDEBAR_CTA: Partial<Record<UserRole, SidebarCta>> = {
+  owner: { label: 'New Request', href: '/owner/procurement/new' },
+  warehouse_manager: { label: 'New Shipment', href: '/warehouse/shipments/new' },
+}
+
+function initials(name: string | undefined) {
+  if (!name) return '·'
+  return name
+    .split(' ')
+    .map((p) => p[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('')
+    .toUpperCase()
+}
+
 export function AppLayout() {
   const { profile, signOut } = useAuth()
   const { theme, toggleTheme } = useTheme()
@@ -51,6 +73,12 @@ export function AppLayout() {
 
   const visibleNav = NAV_ITEMS.filter((item) => profile && item.roles.includes(profile.role))
   const workspace = getWorkspaceTheme(profile?.role, profile?.hub)
+  const cta = profile ? SIDEBAR_CTA[profile.role] : undefined
+
+  const activeItem = visibleNav.find(
+    (item) =>
+      location.pathname === item.href || location.pathname.startsWith(item.href + '/')
+  )
 
   const hubStyle = {
     '--hub': workspace.accent,
@@ -60,55 +88,103 @@ export function AppLayout() {
 
   return (
     <div className="flex min-h-screen bg-background text-foreground" style={hubStyle}>
-      <aside className="flex w-64 flex-col border-r bg-card">
-        <div className="border-b p-6">
-          <div className="flex items-center gap-2">
-            <span className="h-3 w-3 rounded-full bg-[var(--hub)]" />
-            <h1 className="text-lg font-bold">LogiFlow</h1>
-          </div>
-          <p
-            className="mt-2 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold"
-            style={{ backgroundColor: 'var(--hub-soft)', color: 'var(--hub)' }}
+      <aside className="flex w-64 flex-col bg-[var(--color-sidebar)] text-[var(--color-sidebar-foreground)]">
+        {/* Brand */}
+        <div className="flex items-center gap-3 px-5 py-5">
+          <span
+            className="flex h-9 w-9 items-center justify-center rounded-lg font-bold text-white"
+            style={{ backgroundColor: 'var(--hub)' }}
           >
-            {workspace.label}
-          </p>
-          <p className="mt-2 text-xs text-muted-foreground">{profile?.full_name}</p>
+            <Ship className="h-5 w-5" />
+          </span>
+          <div className="leading-tight">
+            <p className="text-sm font-bold text-white">Logistics OS</p>
+            <p className="text-[11px] text-[var(--color-sidebar-muted)]">{workspace.label}</p>
+          </div>
         </div>
-        <nav className="flex-1 space-y-1 p-4">
+
+        {/* Primary CTA */}
+        {cta ? (
+          <div className="px-3 pb-2">
+            <Link
+              to={cta.href}
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--color-brand)] px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-600"
+            >
+              <Plus className="h-4 w-4" />
+              {cta.label}
+            </Link>
+          </div>
+        ) : null}
+
+        {/* Nav */}
+        <nav className="flex-1 space-y-1 px-3 py-3">
           {visibleNav.map((item) => {
             const Icon = item.icon
-            const active =
-              location.pathname === item.href || location.pathname.startsWith(item.href + '/')
+            const active = item === activeItem
             return (
               <Link
                 key={item.href}
                 to={item.href}
-                style={active ? { backgroundColor: 'var(--hub)', color: 'var(--hub-foreground)' } : undefined}
                 className={cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                  !active && 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                  'relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                  active
+                    ? 'bg-white/5 text-white'
+                    : 'text-[var(--color-sidebar-foreground)] hover:bg-white/5 hover:text-white'
                 )}
               >
-                <Icon className="h-4 w-4" />
+                {active ? (
+                  <span
+                    className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-full"
+                    style={{ backgroundColor: 'var(--hub)' }}
+                  />
+                ) : null}
+                <Icon className="h-4 w-4 shrink-0" />
                 {item.label}
               </Link>
             )
           })}
         </nav>
-        <div className="border-t p-4">
-          <Button variant="ghost" className="w-full justify-start" onClick={() => signOut()}>
-            <LogOut className="mr-2 h-4 w-4" />
+
+        {/* Footer: user + sign out */}
+        <div className="border-t border-[var(--color-sidebar-border)] p-3">
+          <div className="flex items-center gap-3 px-2 py-2">
+            <span
+              className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold text-white"
+              style={{ backgroundColor: 'var(--hub)' }}
+            >
+              {initials(profile?.full_name)}
+            </span>
+            <div className="min-w-0 flex-1 leading-tight">
+              <p className="truncate text-sm font-medium text-white">{profile?.full_name}</p>
+              <p className="truncate text-[11px] capitalize text-[var(--color-sidebar-muted)]">
+                {profile?.role?.replace('_', ' ')}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => signOut()}
+            className="mt-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-sidebar-foreground)] transition-colors hover:bg-white/5 hover:text-white"
+          >
+            <LogOut className="h-4 w-4" />
             Sign out
-          </Button>
+          </button>
         </div>
       </aside>
 
       <div className="flex flex-1 flex-col">
-        <header
-          className="flex h-14 items-center justify-between border-b bg-card px-6"
-          style={{ borderTopColor: 'var(--hub)', borderTopWidth: 3 }}
-        >
-          <div />
+        <header className="flex h-16 items-center justify-between border-b bg-card px-6">
+          <div className="flex items-center gap-3">
+            <h2 className="text-sm font-semibold text-foreground">
+              {activeItem?.label ?? 'Logistics OS'}
+            </h2>
+            <span
+              className="hidden rounded-full px-2.5 py-0.5 text-[11px] font-semibold sm:inline-flex"
+              style={{ backgroundColor: 'var(--hub-soft)', color: 'var(--hub)' }}
+            >
+              {workspace.label}
+            </span>
+          </div>
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -120,6 +196,13 @@ export function AppLayout() {
               {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>
             <NotificationBell />
+            <span
+              className="ml-1 flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold text-white"
+              style={{ backgroundColor: 'var(--hub)' }}
+              title={profile?.full_name}
+            >
+              {initials(profile?.full_name)}
+            </span>
           </div>
         </header>
         <main className="flex-1 overflow-auto p-6">

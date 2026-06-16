@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
@@ -7,11 +7,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
+import { PageHeader } from '@/components/ui/page-header'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { Loader2 } from 'lucide-react'
+import { HUB_LABELS } from '@/lib/constants'
 import type { Client, ProcurementRequest } from '@/types/database'
 
 export function WarehouseShipmentCreatePage() {
@@ -115,85 +117,105 @@ export function WarehouseShipmentCreatePage() {
   })
 
   return (
-    <div className="mx-auto max-w-xl space-y-6">
-      <h2 className="text-2xl font-bold">New Shipment</h2>
-      <Card>
-        <CardHeader>
-          <CardTitle>Shipment Details</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label>Primary Client <span className="text-xs text-muted-foreground">(optional)</span></Label>
-            <Select value={clientId || '__none__'} onValueChange={(v) => setClientId(v === '__none__' ? '' : v)}>
-              <SelectTrigger>
-                <SelectValue placeholder="None — multi-client shipment" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">None — multi-client shipment</SelectItem>
-                {clients?.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Leave empty for mixed shipments. Assign each product to its client after creating.
-            </p>
-          </div>
+    <div className="mx-auto max-w-2xl space-y-6">
+      <PageHeader
+        title="Add New Shipment"
+        description={`Register inbound or outbound cargo for ${hub ? HUB_LABELS[hub] : 'your'} hub.`}
+      />
+      <Card className="shadow-[var(--shadow-card)]">
+        <CardContent className="space-y-6 p-6">
+          <FormSection title="Origin & Source">
+            <div className="space-y-2">
+              <Label>Link to Procurement Request <span className="text-muted-foreground text-xs">(optional)</span></Label>
+              <Select
+                value={procurementId || '__none__'}
+                onValueChange={(v) => setProcurementId(v === '__none__' ? '' : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="None — standalone shipment" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">None — standalone shipment</SelectItem>
+                  {readyItems?.map((r) => (
+                    <SelectItem key={r.id} value={r.id}>{r.title}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Only "Ready to Ship" procurement requests are shown. Linking copies its products in.
+              </p>
+            </div>
+          </FormSection>
 
-          <div className="space-y-2">
-            <Label>Link to Procurement Request <span className="text-muted-foreground text-xs">(optional)</span></Label>
-            <Select
-              value={procurementId || '__none__'}
-              onValueChange={(v) => setProcurementId(v === '__none__' ? '' : v)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="None — standalone shipment" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">None — standalone shipment</SelectItem>
-                {readyItems?.map((r) => (
-                  <SelectItem key={r.id} value={r.id}>{r.title}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Only "Ready to Ship" procurement requests are shown.
-            </p>
-          </div>
+          <FormSection title="Client Information">
+            <div className="space-y-2">
+              <Label>Primary Client <span className="text-xs text-muted-foreground">(optional)</span></Label>
+              <Select value={clientId || '__none__'} onValueChange={(v) => setClientId(v === '__none__' ? '' : v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="None — multi-client shipment" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">None — multi-client shipment</SelectItem>
+                  {clients?.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Leave empty for mixed shipments. Assign each product to its client after creating.
+              </p>
+            </div>
+          </FormSection>
 
-          <div className="space-y-2">
-            <Label>Contents / Description</Label>
-            <Textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Describe what's in this shipment…"
-              rows={3}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Weight (kg)</Label>
-            <Input
-              type="number" min={0} step="0.01"
-              value={weightKg}
-              onChange={(e) => setWeightKg(e.target.value)}
-              placeholder="0.00"
-            />
-          </div>
+          <FormSection title="Cargo Details">
+            <div className="space-y-2">
+              <Label>Contents / Description</Label>
+              <Textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Describe what's in this shipment…"
+                rows={3}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Weight (kg)</Label>
+              <Input
+                type="number" min={0} step="0.01"
+                value={weightKg}
+                onChange={(e) => setWeightKg(e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+          </FormSection>
 
           {error && <p className="text-sm text-red-500">{error}</p>}
 
-          <Button
-            className="w-full"
-            onClick={() => { setError(null); createShipment.mutate() }}
-            disabled={createShipment.isPending}
-          >
-            {createShipment.isPending ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating…</>
-            ) : 'Create Shipment'}
-          </Button>
+          <div className="flex justify-end gap-2 border-t pt-4">
+            <Button variant="outline" onClick={() => navigate('/warehouse/shipments')}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => { setError(null); createShipment.mutate() }}
+              disabled={createShipment.isPending}
+            >
+              {createShipment.isPending ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating…</>
+              ) : 'Create Shipment'}
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+function FormSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-4">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-brand)]">
+        {title}
+      </h3>
+      {children}
+    </section>
   )
 }
