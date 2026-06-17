@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { CalendarDays, ExternalLink, ImagePlus, Loader2, Trash2, X } from 'lucide-react'
@@ -18,8 +18,14 @@ import {
 } from '@/components/ui/select'
 import { ProcurementStatusBadge } from '@/components/StatusBadge'
 import { ORIGIN_HUBS, HUB_LABELS } from '@/lib/constants'
+import {
+  REQUEST_MODE_HINTS,
+  REQUEST_MODE_LABELS,
+  syncProductPricing,
+  type ProductPricingInput,
+} from '@/lib/productPricing'
 import { cn, formatCurrency } from '@/lib/utils'
-import type { Client, HubType, ProcurementItem, ProcurementRequest, ShipmentType } from '@/types/database'
+import type { Client, HubType, ProcurementItem, ProcurementRequest, ProcurementRequestMode, ProductPricing, ShipmentType } from '@/types/database'
 
 export function ProcurementFormPage() {
   const { id } = useParams()
@@ -38,6 +44,8 @@ export function ProcurementFormPage() {
   const [uploadingIndex, setUploadingIndex] = useState<number | null>(null)
   const [clientId, setClientId] = useState('')
   const [shipmentType, setShipmentType] = useState<ShipmentType>('client_owned')
+  const [requestMode, setRequestMode] = useState<ProcurementRequestMode>('sourced')
+  const [itemPricing, setItemPricing] = useState<Record<number, { purchaseCost: string; clientPrice: string; advanceAmount: string }>>({})
   const [selectedClientId, setSelectedClientId] = useState<string>('')
   const [createError, setCreateError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -64,6 +72,31 @@ export function ProcurementFormPage() {
     },
     enabled: !isNew,
   })
+
+  const { data: productPricing } = useQuery({
+    queryKey: ['product-pricing', id],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('product_pricing').select('*').eq('request_id', id!)
+      if (error) throw error
+      return data as ProductPricing[]
+    },
+    enabled: !isNew && profile?.role === 'owner',
+  })
+
+  useEffect(() => {
+    if (request?.client_id) setSelectedClientId(request.client_id)
+  }, [request?.client_id])
+
+  const buildPricingInputs = (): ProductPricingInput[] =>
+    items.map((item, itemIndex) => ({
+      itemIndex,
+      productName: item.name,
+      purchaseCost: itemPricing[itemIndex]?.purchaseCost
+        ? Number(itemPricing[itemIndex].purchaseCost)
+        : null,
+      clientPrice: Number(itemPricing[itemIndex]?.clientPrice || item.expectedSellingPrice || 0),
+      advanceAmount: Number(itemPricing[itemIndex]?.advanceAmount || 0),
+    }))
 
   const updateItem = (index: number, patch: Partial<ProcurementItem>) => {
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...patch } : it)))
@@ -124,6 +157,7 @@ export function ProcurementFormPage() {
         status,
         client_id: clientId || null,
         shipment_type: shipmentType,
+        request_mode: requestMode,
         requested_by: user!.id,
       }
 
@@ -145,6 +179,9 @@ export function ProcurementFormPage() {
             body: { type: 'procurement_status', requestId: data!.id, newStatus: 'sent' },
           })
         }
+        if (profile?.role === 'owner') {
+          await syncProductPricing(data!.id, clientId || null, items, buildPricingInputs())
+        }
         return data
       }
 
@@ -153,6 +190,9 @@ export function ProcurementFormPage() {
         .update(fullPayload)
         .eq('id', id!)
       if (error) throw error
+      if (profile?.role === 'owner') {
+        await syncProductPricing(id!, clientId || null, items, buildPricingInputs())
+      }
       if (status === 'sent') {
         await supabase.functions.invoke('shipment-status', {
           body: { type: 'procurement_status', requestId: id, newStatus: 'sent' },
@@ -186,6 +226,30 @@ export function ProcurementFormPage() {
           .eq('id', quote.id)
       }
 
+      if (action === 'approved' && request) {
+        const inputs = buildPricingInputs().map((p) => {
+          if (!p.purchaseCost && quote) {
+            return { ...p, purchaseCost: Number(quote.total_cost) / Math.max(request.items.length, 1) }
+          }
+          return p
+        })
+        await syncProductPricing(id!, request.client_id, request.items, inputs)
+
+        const totalAdvance = inputs.reduce((s, p) => s + (p.advanceAmount || 0), 0)
+        if (totalAdvance > 0) {
+          await supabase.from('financial_entries').insert({
+            shipment_id: null,
+            procurement_request_id: id,
+            category: 'advance_payment',
+            amount: totalAdvance,
+            currency: 'USD',
+            description: `Client advance: ${request.title}`,
+            entry_date: new Date().toISOString().split('T')[0],
+            created_by: user!.id,
+          })
+        }
+      }
+
       await supabase.functions.invoke('shipment-status', {
         body: { type: 'procurement_status', requestId: id, newStatus: action },
       })
@@ -211,7 +275,7 @@ export function ProcurementFormPage() {
 
   const createShipment = useMutation({
     mutationFn: async () => {
-      const assignedClientId = selectedClientId || clientsList?.[0]?.id
+      const assignedClientId = selectedClientId || request?.client_id || clientsList?.[0]?.id
       if (!assignedClientId) throw new Error('No clients found. Please create a client first under Clients.')
 
       const { data, error } = await supabase
@@ -241,6 +305,7 @@ export function ProcurementFormPage() {
 
   if (!isNew && request) {
     const quote = request.quotes?.[0]
+    const modeLabel = REQUEST_MODE_LABELS[request.request_mode ?? 'sourced']
     return (
       <div className="mx-auto max-w-2xl space-y-6">
         <h2 className="text-2xl font-bold">{request.title}</h2>
@@ -258,6 +323,7 @@ export function ProcurementFormPage() {
               <p><span className="font-medium text-muted-foreground">Type</span><br />
                 {request.shipment_type === 'client_owned' ? 'Client-Owned' : 'Business-Sourced'}
               </p>
+              <p><span className="font-medium text-muted-foreground">Request Mode</span><br />{modeLabel}</p>
               {request.notes && (
                 <p className="col-span-2"><span className="font-medium text-muted-foreground">Notes</span><br />{request.notes}</p>
               )}
@@ -269,17 +335,79 @@ export function ProcurementFormPage() {
               ))}
             </div>
 
-            {quote && (
+            {quote && request.request_mode !== 'direct_buy' && (
               <div className="rounded-lg border p-4">
                 <p className="font-medium">Quote: {formatCurrency(quote.total_cost, quote.currency)}</p>
                 <p className="text-sm text-muted-foreground">{quote.notes}</p>
               </div>
             )}
 
-            {request.status === 'quoted' && (
-              <div className="flex gap-2">
-                <Button onClick={() => approveQuote.mutate('approved')}>Approve</Button>
-                <Button variant="destructive" onClick={() => approveQuote.mutate('rejected')}>Reject</Button>
+            {profile?.role === 'owner' && productPricing && productPricing.length > 0 && (
+              <div className="rounded-lg border p-4 space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Owner Pricing</p>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-xs text-muted-foreground">
+                      <th className="pb-2">Product</th>
+                      <th className="pb-2 text-right">Buy</th>
+                      <th className="pb-2 text-right">Sell</th>
+                      <th className="pb-2 text-right">Margin</th>
+                      <th className="pb-2 text-right">Advance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {productPricing.map((p) => (
+                      <tr key={p.id} className="border-b last:border-0">
+                        <td className="py-2">{p.product_name}</td>
+                        <td className="py-2 text-right">{p.purchase_cost != null ? formatCurrency(p.purchase_cost, p.currency) : '—'}</td>
+                        <td className="py-2 text-right">{formatCurrency(p.client_price, p.currency)}</td>
+                        <td className="py-2 text-right font-semibold text-emerald-600">
+                          {p.purchase_cost != null ? formatCurrency(p.client_price - p.purchase_cost, p.currency) : '—'}
+                        </td>
+                        <td className="py-2 text-right">{p.advance_amount > 0 ? formatCurrency(p.advance_amount, p.currency) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {request.status === 'quoted' && request.request_mode !== 'direct_buy' && (
+              <div className="space-y-3 rounded-lg border border-dashed p-4">
+                <p className="text-sm text-muted-foreground">Set client price and record any advance before approving.</p>
+                {request.items.map((item, i) => (
+                  <div key={i} className="grid grid-cols-3 gap-2 text-sm">
+                    <span className="col-span-3 font-medium">{item.name}</span>
+                    <div>
+                      <Label className="text-xs">Buy price</Label>
+                      <Input
+                        type="number"
+                        value={itemPricing[i]?.purchaseCost ?? ''}
+                        onChange={(e) => setItemPricing({ ...itemPricing, [i]: { purchaseCost: e.target.value, clientPrice: itemPricing[i]?.clientPrice ?? String(item.expectedSellingPrice ?? ''), advanceAmount: itemPricing[i]?.advanceAmount ?? '' } })}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Client price</Label>
+                      <Input
+                        type="number"
+                        value={itemPricing[i]?.clientPrice ?? String(item.expectedSellingPrice ?? '')}
+                        onChange={(e) => setItemPricing({ ...itemPricing, [i]: { purchaseCost: itemPricing[i]?.purchaseCost ?? '', clientPrice: e.target.value, advanceAmount: itemPricing[i]?.advanceAmount ?? '' } })}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Advance</Label>
+                      <Input
+                        type="number"
+                        value={itemPricing[i]?.advanceAmount ?? ''}
+                        onChange={(e) => setItemPricing({ ...itemPricing, [i]: { purchaseCost: itemPricing[i]?.purchaseCost ?? '', clientPrice: itemPricing[i]?.clientPrice ?? '', advanceAmount: e.target.value } })}
+                      />
+                    </div>
+                  </div>
+                ))}
+                <div className="flex gap-2">
+                  <Button onClick={() => approveQuote.mutate('approved')}>Approve</Button>
+                  <Button variant="destructive" onClick={() => approveQuote.mutate('rejected')}>Reject</Button>
+                </div>
               </div>
             )}
 
@@ -304,7 +432,7 @@ export function ProcurementFormPage() {
                       <div className="space-y-2">
                         <Label>Assign to Client</Label>
                         <Select
-                          value={selectedClientId || clientsList[0].id}
+                          value={selectedClientId || request.client_id || clientsList[0].id}
                           onValueChange={setSelectedClientId}
                         >
                           <SelectTrigger>
@@ -350,6 +478,26 @@ export function ProcurementFormPage() {
         {/* ── Left: settings ── */}
         <Card className="flex flex-col overflow-hidden">
           <CardContent className="flex flex-col gap-5 overflow-y-auto p-5">
+
+            <FormSection title="Request Type">
+              <div className="space-y-2">
+                {(['sourced', 'direct_buy'] as const).map((mode) => (
+                  <label key={mode} className="flex cursor-pointer gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/40">
+                    <input
+                      type="radio"
+                      name="requestMode"
+                      checked={requestMode === mode}
+                      onChange={() => setRequestMode(mode)}
+                      className="mt-1"
+                    />
+                    <div>
+                      <p className="text-sm font-semibold">{REQUEST_MODE_LABELS[mode]}</p>
+                      <p className="text-xs text-muted-foreground">{REQUEST_MODE_HINTS[mode]}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </FormSection>
 
             <FormSection title="Request Info">
               <div className="space-y-1.5">
@@ -497,6 +645,44 @@ export function ProcurementFormPage() {
                       </Button>
                     )}
                   </div>
+
+                  {/* owner pricing — purchase cost hidden from BD */}
+                  {profile?.role === 'owner' && (
+                    <div className="grid grid-cols-2 gap-3 border-t pt-3">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">Buy Price (USD)</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          placeholder="Your cost"
+                          value={itemPricing[i]?.purchaseCost ?? ''}
+                          onChange={(e) =>
+                            setItemPricing({
+                              ...itemPricing,
+                              [i]: { ...itemPricing[i], purchaseCost: e.target.value, clientPrice: itemPricing[i]?.clientPrice ?? '', advanceAmount: itemPricing[i]?.advanceAmount ?? '' },
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">Client Price (USD)</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          placeholder="Charge client"
+                          value={itemPricing[i]?.clientPrice ?? item.expectedSellingPrice ?? ''}
+                          onChange={(e) =>
+                            setItemPricing({
+                              ...itemPricing,
+                              [i]: { purchaseCost: itemPricing[i]?.purchaseCost ?? '', clientPrice: e.target.value, advanceAmount: itemPricing[i]?.advanceAmount ?? '' },
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+                  )}
 
                   {/* deadline + selling price */}
                   <div className="grid grid-cols-2 gap-3">

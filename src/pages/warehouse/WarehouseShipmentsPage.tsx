@@ -10,9 +10,16 @@ import { ShipmentStatusBadge } from '@/components/StatusBadge'
 import { ShipmentTimeline } from '@/components/ShipmentTimeline'
 import { ShipmentItemsManager } from '@/components/ShipmentItemsManager'
 import { AddShipmentDialog } from '@/components/AddShipmentDialog'
+import { ShipmentCapacityMonitor } from '@/components/ShipmentCapacityMonitor'
+import { BdShipmentReceivePanel } from '@/components/BdShipmentReceivePanel'
 import { HUB_LABELS, ORIGIN_HUBS, SHIPMENT_STATUS_LABELS, getNextShipmentStatuses, canManageShipmentItems } from '@/lib/constants'
-import { formatDateTime } from '@/lib/utils'
-import type { HubType, Shipment, ShipmentEvent } from '@/types/database'
+import {
+  formatShippingMethod,
+  getEstimatedArrivalDate,
+  getTransitDays,
+} from '@/lib/shipmentSchedule'
+import { formatDate, formatDateTime } from '@/lib/utils'
+import type { HubType, Shipment, ShipmentEvent, ShipmentItem } from '@/types/database'
 
 type ListShipment = Shipment & {
   clients: { name: string } | null
@@ -55,6 +62,15 @@ function ShipmentTable({ rows }: { rows: ListShipment[] }) {
   )
 }
 
+function VoyageStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-muted/40 px-3 py-2">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="font-data text-sm font-semibold">{value}</p>
+    </div>
+  )
+}
+
 export function WarehouseShipmentsListPage() {
   const { profile } = useAuth()
   const hub = profile?.hub
@@ -65,7 +81,6 @@ export function WarehouseShipmentsListPage() {
   useEffect(() => {
     if (locationState?.openCreate) {
       setAddOpen(true)
-      // Clear state so re-visits don't re-open
       window.history.replaceState({}, '')
     }
   }, [locationState?.openCreate])
@@ -97,7 +112,6 @@ export function WarehouseShipmentsListPage() {
       </div>
 
       {isBD ? (
-        // Bangladesh: group incoming shipments by origin hub
         ORIGIN_HUBS.map((origin: HubType) => {
           const rows = shipments?.filter((s) => s.origin_hub === origin) ?? []
           return (
@@ -150,9 +164,26 @@ export function WarehouseShipmentDetailPage() {
         .select('*')
         .eq('shipment_id', id!)
         .order('created_at', { ascending: false })
+        .limit(8)
       if (error) throw error
       return data as ShipmentEvent[]
     },
+  })
+
+  const isBd = profile?.hub === 'bangladesh'
+
+  const { data: shipmentItems } = useQuery({
+    queryKey: ['shipment-items', id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('shipment_items')
+        .select('*, clients(name)')
+        .eq('shipment_id', id!)
+        .order('created_at')
+      if (error) throw error
+      return data as ShipmentItem[]
+    },
+    enabled: isBd,
   })
 
   const updateStatus = useMutation({
@@ -170,6 +201,7 @@ export function WarehouseShipmentDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shipment', id] })
       queryClient.invalidateQueries({ queryKey: ['shipment-events', id] })
+      queryClient.invalidateQueries({ queryKey: ['warehouse-inventory'] })
     },
   })
 
@@ -177,14 +209,16 @@ export function WarehouseShipmentDetailPage() {
 
   const nextStatuses = getNextShipmentStatuses(shipment.status, profile?.hub ?? null)
   const canEditItems = canManageShipmentItems(shipment.status, 'warehouse_manager', profile?.hub, shipment.origin_hub)
+  const dest = shipment.destination_hub ?? 'bangladesh'
+  const eta = getEstimatedArrivalDate(shipment.ship_date, shipment.shipping_method)
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-4">
+    <div className="mx-auto flex h-[calc(100vh-7rem)] max-w-7xl flex-col gap-4">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-4">
         <div>
-          <h2 className="text-2xl font-bold">{shipment.reference_code}</h2>
+          <h2 className="font-data text-xl font-bold">{shipment.reference_code}</h2>
           <p className="text-xs text-muted-foreground">
-            {HUB_LABELS[shipment.origin_hub]} → {HUB_LABELS[shipment.current_hub]}
+            {HUB_LABELS[shipment.origin_hub]} → {HUB_LABELS[dest]} · {formatShippingMethod(shipment.shipping_method)}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -202,50 +236,102 @@ export function WarehouseShipmentDetailPage() {
         </div>
       </div>
 
-      <Card>
-        <CardHeader><CardTitle>Products in this Shipment</CardTitle></CardHeader>
-        <CardContent>
-          {!canEditItems && (
-            <p className="mb-3 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
-              {shipment.origin_hub === profile?.hub
-                ? 'Products are locked — shipment already dispatched from origin.'
-                : 'View only — only the origin hub and head office can change products.'}
-            </p>
+      <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        <VoyageStat
+          label="Sail Date"
+          value={shipment.ship_date ? formatDate(shipment.ship_date) : 'Not set'}
+        />
+        <VoyageStat label="Est. Arrival" value={eta ? formatDate(eta.toISOString()) : '—'} />
+        <VoyageStat
+          label="Transit"
+          value={shipment.ship_date ? `~${getTransitDays(shipment.shipping_method)} days` : '—'}
+        />
+        <VoyageStat label="Current Hub" value={HUB_LABELS[shipment.current_hub]} />
+        <VoyageStat label="Client" value={shipment.clients?.name ?? 'Per product'} />
+      </div>
+
+      <ShipmentCapacityMonitor
+        shipmentId={shipment.id}
+        limits={shipment}
+        compact
+      />
+
+      {isBd && shipmentItems && (
+        <BdShipmentReceivePanel
+          shipmentId={shipment.id}
+          shipmentStatus={shipment.status}
+          items={shipmentItems}
+          canManage={isBd}
+        />
+      )}
+
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[1fr_280px]">
+        <Card className="flex min-h-0 flex-col overflow-hidden">
+          <CardHeader className="shrink-0 border-b py-3">
+            <CardTitle className="text-base">Products in this Shipment</CardTitle>
+          </CardHeader>
+          <CardContent className="min-h-0 flex-1 overflow-y-auto pt-4">
+            {!canEditItems && !isBd && (
+              <p className="mb-3 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                {shipment.origin_hub === profile?.hub
+                  ? 'Products are locked — shipment already dispatched from origin.'
+                  : 'View only — only the origin hub and head office can change products.'}
+              </p>
+            )}
+            {!isBd && (
+              <ShipmentItemsManager
+                shipmentId={shipment.id}
+                canEdit={canEditItems}
+                originHub={shipment.origin_hub}
+              />
+            )}
+            {isBd && shipmentItems && shipmentItems.length === 0 && (
+              <p className="text-sm text-muted-foreground">No products on this shipment.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        <div className="flex min-h-0 flex-col gap-3 overflow-hidden">
+          <Card className="shrink-0">
+            <CardHeader className="py-3">
+              <CardTitle className="text-base">Progress</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <ShipmentTimeline status={shipment.status} variant="horizontal" />
+            </CardContent>
+          </Card>
+
+          <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <CardHeader className="shrink-0 border-b py-3">
+              <CardTitle className="text-base">Event History</CardTitle>
+            </CardHeader>
+            <CardContent className="min-h-0 flex-1 overflow-y-auto pt-3">
+              <ul className="space-y-1.5 text-xs">
+                {events?.map((e) => (
+                  <li key={e.id} className="flex justify-between gap-2 border-b py-1.5 last:border-0">
+                    <span className="font-medium">
+                      {e.from_status ? `${e.from_status} → ` : ''}{e.to_status}
+                    </span>
+                    <span className="shrink-0 text-muted-foreground">{formatDateTime(e.created_at)}</span>
+                  </li>
+                ))}
+                {!events?.length && <p className="text-muted-foreground">No events yet.</p>}
+              </ul>
+            </CardContent>
+          </Card>
+
+          {shipment.description && (
+            <Card className="shrink-0">
+              <CardHeader className="py-3">
+                <CardTitle className="text-base">Notes</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0 text-xs text-muted-foreground">
+                {shipment.description}
+              </CardContent>
+            </Card>
           )}
-          <ShipmentItemsManager shipmentId={shipment.id} canEdit={canEditItems} originHub={shipment.origin_hub} />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>Progress</CardTitle></CardHeader>
-        <CardContent>
-          <ShipmentTimeline status={shipment.status} />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>Details</CardTitle></CardHeader>
-        <CardContent className="space-y-2 text-sm">
-          <p><strong>Client:</strong> {shipment.clients?.name ?? 'Multiple / per-product'}</p>
-          <p><strong>Origin:</strong> {HUB_LABELS[shipment.origin_hub]}</p>
-          <p><strong>Current Hub:</strong> {HUB_LABELS[shipment.current_hub]}</p>
-          <p><strong>Description:</strong> {shipment.description ?? '—'}</p>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>Event History</CardTitle></CardHeader>
-        <CardContent>
-          <ul className="space-y-2 text-sm">
-            {events?.map((e) => (
-              <li key={e.id} className="flex justify-between border-b py-2">
-                <span>{e.from_status ? `${e.from_status} → ` : ''}{e.to_status}</span>
-                <span className="text-muted-foreground">{formatDateTime(e.created_at)}</span>
-              </li>
-            ))}
-          </ul>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   )
 }

@@ -19,8 +19,15 @@ import { cn } from '@/lib/utils'
 import { HUB_LABELS, PRE_TRANSIT_STATUSES } from '@/lib/constants'
 import { sumLineTotals, wouldExceedCapacity } from '@/lib/shipmentCapacity'
 import type { Client, HubType, InventoryStatus, Shipment, ShipmentItem, WarehouseInventory } from '@/types/database'
+import { BdWarehouseStoragePage } from '@/pages/warehouse/BdWarehouseStoragePage'
 
 export function WarehouseStoragePage() {
+  const { profile } = useAuth()
+  if (profile?.hub === 'bangladesh') return <BdWarehouseStoragePage />
+  return <OriginWarehouseStoragePage />
+}
+
+function OriginWarehouseStoragePage() {
   const { profile } = useAuth()
   const queryClient = useQueryClient()
   const hub = (profile?.hub ?? 'dubai') as HubType
@@ -35,7 +42,7 @@ export function WarehouseStoragePage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('warehouse_inventory')
-        .select('*, clients(name)')
+        .select('*, clients(name), shipments(reference_code)')
         .eq('hub', hub)
         .order('created_at', { ascending: false })
       if (error) throw error
@@ -65,7 +72,9 @@ export function WarehouseStoragePage() {
   const hasOpenShipments = (openShipments?.length ?? 0) > 0
 
   const visible = (items ?? []).filter((i) => i.status === tab)
-  const selectedItems = (items ?? []).filter((i) => selected.has(i.id) && i.status === 'in_storage')
+  const selectedItems = (items ?? []).filter(
+    (i) => selected.has(i.id) && i.status === 'in_storage' && !i.shipment_id
+  )
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -80,7 +89,7 @@ export function WarehouseStoragePage() {
       <div className="flex shrink-0 items-center justify-between">
         <div>
           <h2 className="text-xl font-bold">{HUB_LABELS[hub]} Storage</h2>
-          <p className="text-xs text-muted-foreground">Products stored at this hub. Select products to add them to a shipment.</p>
+          <p className="text-xs text-muted-foreground">Products stored at this hub. Assign to a shipment — they stay here until that shipment ships.</p>
         </div>
         <div className="flex items-center gap-2">
           {tab === 'in_storage' && (
@@ -148,7 +157,7 @@ export function WarehouseStoragePage() {
                   )}
                 >
                   <div className="flex items-start gap-3">
-                    {tab === 'in_storage' && (
+                    {tab === 'in_storage' && !item.shipment_id && (
                       <input
                         type="checkbox"
                         checked={selected.has(item.id)}
@@ -165,7 +174,15 @@ export function WarehouseStoragePage() {
                     )}
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-semibold">{item.name}</p>
-                      {!item.weight_kg && tab === 'in_storage' && (
+                      {tab === 'in_storage' && item.shipment_id && (
+                        <Link
+                          to={`/warehouse/shipments/${item.shipment_id}`}
+                          className="text-[10px] font-medium text-[var(--hub)] hover:underline"
+                        >
+                          Reserved → {item.shipments?.reference_code ?? 'shipment'}
+                        </Link>
+                      )}
+                      {!item.weight_kg && tab === 'in_storage' && !item.shipment_id && (
                         <span className="text-[10px] font-medium text-amber-600">Weight required before ship</span>
                       )}
                       <p className="text-xs text-muted-foreground">
@@ -186,7 +203,14 @@ export function WarehouseStoragePage() {
                     </div>
                   </div>
                   {item.notes && <p className="text-xs text-muted-foreground">{item.notes}</p>}
-                  {tab === 'in_storage' && !item.weight_kg && (
+                  {tab === 'in_storage' && item.shipment_id && (
+                    <Button asChild size="sm" variant="outline" className="mt-auto">
+                      <Link to={`/warehouse/shipments/${item.shipment_id}`}>
+                        View shipment ({item.shipments?.reference_code})
+                      </Link>
+                    </Button>
+                  )}
+                  {tab === 'in_storage' && !item.weight_kg && !item.shipment_id && (
                     <Button size="sm" variant="outline" className="mt-auto" onClick={() => setWeightEdit(item)}>
                       Set weight
                     </Button>
@@ -305,12 +329,36 @@ function AddToShipmentDialog({
   const { user } = useAuth()
   const [target, setTarget] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [weightDrafts, setWeightDrafts] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    if (open) {
+      const drafts: Record<string, string> = {}
+      for (const it of items) {
+        if (it.weight_kg == null || it.weight_kg <= 0) {
+          drafts[it.id] = ''
+        }
+      }
+      setWeightDrafts(drafts)
+    }
+  }, [open, items])
 
   useEffect(() => {
     if (open && openShipments.length && !target) {
       setTarget(openShipments[0].id)
     }
   }, [open, openShipments, target])
+
+  const resolvedItems = items.map((it) => {
+    const draft = weightDrafts[it.id]
+    const weight =
+      it.weight_kg != null && it.weight_kg > 0
+        ? it.weight_kg
+        : draft && Number(draft) > 0
+          ? Number(draft)
+          : null
+    return { ...it, weight_kg: weight }
+  })
 
   const selectedShipment = openShipments.find((s) => s.id === target)
 
@@ -327,7 +375,7 @@ function AddToShipmentDialog({
     enabled: open && !!target,
   })
 
-  const adding = sumLineTotals(items)
+  const adding = sumLineTotals(resolvedItems)
   const current = sumLineTotals(existingItems ?? [])
   const limits = {
     maxWeight: selectedShipment?.weight_kg,
@@ -335,16 +383,27 @@ function AddToShipmentDialog({
     maxQty: selectedShipment?.max_item_quantity,
   }
   const capacityError = wouldExceedCapacity(limits, current, adding)
-  const missingWeight = items.some((i) => i.weight_kg == null || i.weight_kg <= 0)
+  const missingWeight = resolvedItems.some((i) => i.weight_kg == null || i.weight_kg <= 0)
+  const needsWeightInput = items.some((i) => i.weight_kg == null || i.weight_kg <= 0)
 
   const submit = useMutation({
     mutationFn: async () => {
       if (items.length === 0) throw new Error('No products selected')
       if (!target) throw new Error('Select a shipment')
-      if (missingWeight) throw new Error('Every product must have weight (kg) before adding to a shipment')
+      if (missingWeight) throw new Error('Enter weight (kg) for every product')
       if (capacityError) throw capacityError
 
-      const rows = items.map((it) => ({
+      for (const it of resolvedItems) {
+        if (it.weight_kg != null && it.weight_kg > 0) {
+          const { error: weightErr } = await supabase
+            .from('warehouse_inventory')
+            .update({ weight_kg: it.weight_kg })
+            .eq('id', it.id)
+          if (weightErr) throw weightErr
+        }
+      }
+
+      const rows = resolvedItems.map((it) => ({
         shipment_id: target,
         name: it.name,
         quantity: it.quantity,
@@ -361,12 +420,13 @@ function AddToShipmentDialog({
 
       const { error: invErr } = await supabase
         .from('warehouse_inventory')
-        .update({ status: 'shipped', shipment_id: target })
+        .update({ shipment_id: target })
         .in('id', items.map((i) => i.id))
       if (invErr) throw invErr
     },
     onSuccess: () => {
       setTarget('')
+      setWeightDrafts({})
       onOpenChange(false)
       onDone()
     },
@@ -374,7 +434,7 @@ function AddToShipmentDialog({
   })
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) { setTarget(''); setError(null) } onOpenChange(o) }}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) { setTarget(''); setWeightDrafts({}); setError(null) } onOpenChange(o) }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Add {items.length} product(s) to shipment</DialogTitle>
@@ -425,20 +485,48 @@ function AddToShipmentDialog({
                 </div>
               )}
 
-              <ul className="max-h-36 space-y-1 overflow-y-auto rounded-md border p-2 text-sm">
-                {items.map((it) => (
-                  <li key={it.id} className="flex justify-between gap-2">
-                    <span className="truncate">{it.name}</span>
-                    <span className="shrink-0 text-muted-foreground">
-                      {it.quantity} {it.unit ?? 'pcs'}
-                      {it.weight_kg != null ? ` · ${it.weight_kg} kg` : ' · no weight'}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <div className="max-h-52 space-y-2 overflow-y-auto rounded-md border p-2 text-sm">
+                {items.map((it) => {
+                  const hasWeight = it.weight_kg != null && it.weight_kg > 0
+                  return (
+                    <div key={it.id} className="rounded-md border bg-background p-2">
+                      <div className="flex justify-between gap-2">
+                        <span className="truncate font-medium">
+                          {it.name}
+                          {it.clients?.name ? ` · ${it.clients.name}` : ''}
+                        </span>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {it.quantity} {it.unit ?? 'pcs'}
+                        </span>
+                      </div>
+                      {hasWeight ? (
+                        <p className="mt-1 text-xs text-muted-foreground">{it.weight_kg} kg</p>
+                      ) : (
+                        <div className="mt-2 space-y-1">
+                          <Label className="text-xs text-amber-700 dark:text-amber-400">
+                            Weight (kg) <span className="text-red-500">*</span>
+                          </Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            placeholder="Required before shipping"
+                            value={weightDrafts[it.id] ?? ''}
+                            onChange={(e) =>
+                              setWeightDrafts((prev) => ({ ...prev, [it.id]: e.target.value }))
+                            }
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
 
-              {missingWeight && (
-                <p className="text-sm text-amber-600">Add weight (kg) to each product in storage before shipping.</p>
+              {needsWeightInput && (
+                <p className="text-xs text-muted-foreground">
+                  Enter total weight for each product above. Saved to storage when added to shipment.
+                </p>
               )}
               {capacityError && (
                 <p className="text-sm text-red-500">{capacityError}</p>

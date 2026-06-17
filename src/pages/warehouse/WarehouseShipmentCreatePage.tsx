@@ -43,12 +43,12 @@ export function WarehouseShipmentCreatePage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('procurement_requests')
-        .select('id, title')
+        .select('id, title, client_id')
         .eq('target_hub', hub!)
         .eq('status', 'ready_to_ship')
         .order('updated_at', { ascending: false })
       if (error) throw error
-      return data as Pick<ProcurementRequest, 'id' | 'title'>[]
+      return data as Pick<ProcurementRequest, 'id' | 'title' | 'client_id'>[]
     },
     enabled: !!hub,
   })
@@ -76,7 +76,10 @@ export function WarehouseShipmentCreatePage() {
       // Copy products from linked procurement request into shipment items
       if (procurementId) {
         const { data: pr } = await supabase
-          .from('procurement_requests').select('items').eq('id', procurementId).single()
+          .from('procurement_requests')
+          .select('items, client_id')
+          .eq('id', procurementId)
+          .single()
         const prItems = (pr?.items ?? []) as { name: string; quantity: number; unit?: string; notes?: string; sourceUrl?: string; images?: string[] }[]
         if (prItems.length > 0) {
           await supabase.from('shipment_items').insert(
@@ -88,6 +91,7 @@ export function WarehouseShipmentCreatePage() {
               notes: it.notes ?? null,
               source_url: it.sourceUrl ?? null,
               images: it.images ?? [],
+              client_id: pr?.client_id ?? (clientId || null),
               procurement_request_id: procurementId,
               created_by: user!.id,
             }))
@@ -129,7 +133,12 @@ export function WarehouseShipmentCreatePage() {
               <Label>Link to Procurement Request <span className="text-muted-foreground text-xs">(optional)</span></Label>
               <Select
                 value={procurementId || '__none__'}
-                onValueChange={(v) => setProcurementId(v === '__none__' ? '' : v)}
+                onValueChange={(v) => {
+                  const id = v === '__none__' ? '' : v
+                  setProcurementId(id)
+                  const pr = readyItems?.find((r) => r.id === id)
+                  if (pr?.client_id) setClientId(pr.client_id)
+                }}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="None — standalone shipment" />

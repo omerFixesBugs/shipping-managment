@@ -1,4 +1,4 @@
-import type { HubType, ProcurementStatus, ShipmentStatus, UserRole } from '@/types/database'
+import type { HubType, ProcurementStatus, ShipmentItemStatus, ShipmentStatus, UserRole } from '@/types/database'
 
 export const HUB_LABELS: Record<HubType, string> = {
   dubai: 'Dubai',
@@ -95,6 +95,10 @@ export const FINANCIAL_CATEGORY_LABELS = {
   customs_fee: 'Customs Fee',
   client_charge: 'Client Charge (Revenue)',
   other: 'Other',
+  advance_payment: 'Client Advance',
+  product_revenue: 'Product Revenue',
+  packaging_cost: 'Packaging Cost',
+  product_purchase: 'Product Purchase',
 } as const
 
 export const PROCUREMENT_TRANSITIONS: Record<ProcurementStatus, ProcurementStatus[]> = {
@@ -122,13 +126,15 @@ export function getNextShipmentStatuses(
   if (current === 'in_transit_to_bangladesh' && next === 'arrived_bangladesh') {
     return hub === 'bangladesh' ? [next] : []
   }
+  // BD: per-product ready/deliver — shipment stays at arrived until all items done
+  if (current === 'arrived_bangladesh' && hub === 'bangladesh') {
+    return []
+  }
   if (
-    ['arrived_bangladesh', 'ready_for_pickup', 'out_for_delivery'].includes(current) &&
+    ['ready_for_pickup', 'out_for_delivery'].includes(current) &&
     hub === 'bangladesh'
   ) {
-    if (current === 'arrived_bangladesh') return ['ready_for_pickup', 'out_for_delivery']
-    if (current === 'ready_for_pickup') return ['delivered']
-    if (current === 'out_for_delivery') return ['delivered']
+    if (current === 'ready_for_pickup' || current === 'out_for_delivery') return ['delivered']
   }
   if (hub === 'dubai' || hub === 'china') {
     if (current === 'received_at_origin') return ['preparing_export']
@@ -136,3 +142,26 @@ export function getNextShipmentStatuses(
   }
   return []
 }
+
+export const SHIPMENT_ITEM_STATUS_LABELS: Record<ShipmentItemStatus, string> = {
+  in_transit: 'In Transit',
+  awaiting_receipt: 'Awaiting Receipt',
+  received_at_bd: 'Received',
+  in_bd_storage: 'In BD Storage',
+  ready_for_pickup: 'Ready for Pickup',
+  out_for_delivery: 'Out for Delivery',
+  delivered: 'Delivered',
+  missing: 'Missing',
+}
+
+export const BD_STORAGE_ITEM_STATUSES: ShipmentItemStatus[] = [
+  'received_at_bd',
+  'in_bd_storage',
+  'ready_for_pickup',
+  'out_for_delivery',
+]
+
+export const BD_RECEIVABLE_STATUSES: ShipmentItemStatus[] = [
+  'awaiting_receipt',
+  'in_transit',
+]

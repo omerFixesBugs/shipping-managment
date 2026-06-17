@@ -10,8 +10,15 @@ import { Card } from '@/components/ui/card'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { ProcurementStatusBadge } from '@/components/StatusBadge'
 import { HUB_LABELS } from '@/lib/constants'
+import { ProcurementProductSummaryDialog } from '@/components/ProcurementProductSummaryDialog'
+import { ProcurementStatusBadge } from '@/components/StatusBadge'
+import {
+  HUB_STATUS_SECTIONS,
+  ProcurementStatusBoard,
+  type ProcurementProductRow,
+} from '@/components/ProcurementStatusBoard'
+import { hubSkipsQuote } from '@/lib/productPricing'
 
 // Hub-side status labels — "sent" from admin = "new request" to hub
 const HUB_STATUS_CONFIG: Record<string, { label: string; dot: string; className: string }> = {
@@ -35,21 +42,21 @@ function HubStatusBadge({ status }: { status: ProcurementStatus }) {
 }
 import { useExchangeRates, SUPPORTED_CURRENCIES, formatWithSymbol, convertAmount } from '@/hooks/useExchangeRates'
 import { useState, useMemo, useEffect } from 'react'
-import { Plus, RefreshCw } from 'lucide-react'
+import { Plus, Search, RefreshCw } from 'lucide-react'
 import type { ProcurementRequest, ProcurementStatus } from '@/types/database'
 
 export function WarehouseProcurementListPage() {
   const { profile, user } = useAuth()
   const isBd = profile?.hub === 'bangladesh'
+  const [search, setSearch] = useState('')
+  const [selectedRow, setSelectedRow] = useState<ProcurementProductRow | null>(null)
 
-  // Hub managers (dubai/china) quote requests targeting their hub.
-  // BD raises requests itself, so it sees the requests it created instead.
-  const { data: requests } = useQuery({
+  const { data: requests, isLoading } = useQuery({
     queryKey: isBd ? ['bd-procurement-requests', user?.id] : ['warehouse-procurement-list', profile?.hub],
     queryFn: async () => {
       const query = supabase
         .from('procurement_requests')
-        .select('*, clients(name)')
+        .select('*, quotes(*), clients(name)')
         .order('created_at', { ascending: false })
       const { data, error } = isBd
         ? await query.eq('requested_by', user!.id)
@@ -60,50 +67,96 @@ export function WarehouseProcurementListPage() {
     enabled: isBd ? !!user?.id : !!profile?.hub,
   })
 
+  const productRows = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return (requests ?? [])
+      .filter((r) => {
+        if (!q) return true
+        return (
+          r.title.toLowerCase().includes(q) ||
+          r.clients?.name?.toLowerCase().includes(q) ||
+          r.items?.some((i) => i.name.toLowerCase().includes(q))
+        )
+      })
+      .flatMap((request) =>
+        (request.items ?? []).map((item, itemIndex) => ({ request, item, itemIndex }))
+      ) as ProcurementProductRow[]
+  }, [requests, search])
+
+  const activeColumns = useMemo(
+    () => HUB_STATUS_SECTIONS.filter((s) => productRows.some((r) => r.request.status === s.status)).length,
+    [productRows]
+  )
+
   return (
-    <div className="flex h-[calc(100vh-7rem)] flex-col gap-3">
-      <div className="flex shrink-0 items-center justify-between">
-        <h2 className="text-xl font-bold">{isBd ? 'My Procurement Requests' : 'Procurement Requests'}</h2>
-        {isBd && (
-          <Button asChild size="sm">
-            <Link to="/warehouse/procurement/new">
-              <Plus className="mr-1 h-4 w-4" /> New Request
-            </Link>
-          </Button>
-        )}
-      </div>
-      <Card className="flex flex-1 flex-col overflow-hidden">
-        <div className="shrink-0 border-b px-4 py-3">
-          <div className="grid grid-cols-[1fr_160px] text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            <span>Title</span>
-            <span>Status</span>
-          </div>
+    <div className="flex h-[calc(100vh-7rem)] flex-col gap-4">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-bold">{isBd ? 'My Procurement Requests' : 'Procurement Pipeline'}</h2>
+          <p className="text-xs text-muted-foreground">
+            {isBd
+              ? 'Track products across each stage of your sourcing requests.'
+              : 'Products awaiting action at your hub, grouped by status.'}
+          </p>
         </div>
-        <div className="flex-1 overflow-y-auto">
-          {!requests?.length ? (
-            <p className="p-10 text-center text-sm text-muted-foreground">
-              {isBd ? 'No requests yet. Create one to source products from a hub.' : 'No procurement requests.'}
-            </p>
-          ) : (
-            <ul className="divide-y">
-              {requests.map((r) => (
-                <li key={r.id}>
-                  <Link
-                    to={`/warehouse/procurement/${r.id}`}
-                    className="grid grid-cols-[1fr_160px] items-center px-4 py-3 transition-colors hover:bg-accent/40"
-                  >
-                    <span className="truncate text-sm font-medium" style={{ color: 'var(--hub)' }}>
-                      {r.title}
-                      {r.clients?.name ? <span className="ml-2 text-xs text-muted-foreground">· {r.clients.name}</span> : null}
-                    </span>
-                    <span><ProcurementStatusBadge status={r.status} /></span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full min-w-[220px] sm:w-64">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search products or requests…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+          {isBd && (
+            <Button asChild size="sm">
+              <Link to="/warehouse/procurement/new">
+                <Plus className="mr-1 h-4 w-4" /> New Request
+              </Link>
+            </Button>
           )}
         </div>
-      </Card>
+      </div>
+
+      <div className="min-h-0 flex-1">
+        <ProcurementStatusBoard
+          sections={HUB_STATUS_SECTIONS}
+          rows={productRows}
+          isLoading={isLoading}
+          onProductClick={setSelectedRow}
+          showHub={isBd}
+          hideEmptyColumns={search.trim().length > 0}
+          emptyMessage={
+            isBd
+              ? search.trim()
+                ? 'No products match your search.'
+                : 'No products yet. Create a request to source from a hub.'
+              : search.trim()
+                ? 'No products match your search.'
+                : 'No procurement products at your hub.'
+          }
+        />
+      </div>
+
+      {!isLoading && productRows.length > 0 && (
+        <p className="shrink-0 text-xs text-muted-foreground">
+          {productRows.length} product{productRows.length !== 1 ? 's' : ''}
+          {search.trim() ? ' matching search' : ''} · {activeColumns} active column
+          {activeColumns !== 1 ? 's' : ''}
+        </p>
+      )}
+
+      <ProcurementProductSummaryDialog
+        row={selectedRow}
+        open={!!selectedRow}
+        onOpenChange={(open) => !open && setSelectedRow(null)}
+        manageHref={selectedRow ? `/warehouse/procurement/${selectedRow.request.id}` : '#'}
+        showHub={isBd}
+        renderStatusBadge={(status) =>
+          isBd ? <ProcurementStatusBadge status={status} /> : <HubStatusBadge status={status} />
+        }
+      />
     </div>
   )
 }
@@ -263,7 +316,8 @@ export function WarehouseProcurementDetailPage() {
   const quote = request.quotes?.[0]
   // Only the hub the request targets can quote / progress it. BD (the requester) is read-only here.
   const canManage = profile?.hub === request.target_hub
-  const showQuoteForm = canManage && request.status === 'sent'
+  const showQuoteForm = canManage && request.status === 'sent' && !hubSkipsQuote(request.request_mode)
+  const showDirectBuyConfirm = canManage && request.status === 'sent' && hubSkipsQuote(request.request_mode)
 
   return (
     <div className="flex h-[calc(100vh-7rem)] flex-col gap-3">
@@ -353,7 +407,25 @@ export function WarehouseProcurementDetailPage() {
         {/* ── Right: quote form / quote summary / actions ── */}
         <Card className="flex flex-col overflow-hidden">
 
-          {/* Quote form — status: sent (only the quoting hub) */}
+          {/* Direct buy — hub confirms availability, no quote */}
+          {showDirectBuyConfirm && (
+            <>
+              <div className="shrink-0 border-b px-5 py-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-brand)]">Direct Buy Request</h3>
+              </div>
+              <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Owner set client pricing. Confirm product is available, purchase it, then progress to storage.
+                  Add shipping & packaging costs when dispatching cargo.
+                </p>
+                <Button onClick={() => updateStatus.mutate('purchasing')}>
+                  Confirm Available & Start Purchasing
+                </Button>
+              </div>
+            </>
+          )}
+
+          {/* Quote form — status: sent (only the quoting hub, sourced mode) */}
           {showQuoteForm && (
             <>
               <div className="flex shrink-0 items-center justify-between border-b px-5 py-3">
@@ -491,7 +563,7 @@ export function WarehouseProcurementDetailPage() {
           )}
 
           {/* Quote summary / status (also the read-only view for the requester) */}
-          {!showQuoteForm && (
+          {!showQuoteForm && !showDirectBuyConfirm && (
             <>
               <div className="shrink-0 border-b px-5 py-3">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-brand)]">Quote & Status</h3>

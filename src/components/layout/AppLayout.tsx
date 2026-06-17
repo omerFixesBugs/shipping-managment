@@ -2,6 +2,7 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Box,
   DollarSign,
+  HandCoins,
   LayoutDashboard,
   LogOut,
   Moon,
@@ -43,8 +44,9 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Employees', href: '/owner/employees', icon: UserCog, roles: ['owner'] },
   { label: 'Hub Dashboard', href: '/warehouse', icon: Box, roles: ['warehouse_manager'] },
   { label: 'Procurement', href: '/warehouse/procurement', icon: ShoppingCart, roles: ['warehouse_manager'] },
-  { label: 'Storage', href: '/warehouse/storage', icon: Warehouse, roles: ['warehouse_manager'], hubs: ['dubai', 'china'] },
+  { label: 'Storage', href: '/warehouse/storage', icon: Warehouse, roles: ['warehouse_manager'], hubs: ['dubai', 'china', 'bangladesh'] },
   { label: 'Shipments', href: '/warehouse/shipments', icon: Package, roles: ['warehouse_manager'] },
+  { label: 'Collections', href: '/warehouse/collections', icon: HandCoins, roles: ['warehouse_manager'], hubs: ['bangladesh'] },
   { label: 'Clients', href: '/warehouse/clients', icon: Users, roles: ['warehouse_manager'] },
   { label: 'My Shipments', href: '/client', icon: Package, roles: ['client'] },
 ]

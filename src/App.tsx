@@ -26,6 +26,7 @@ import {
   WarehouseShipmentDetailPage,
 } from '@/pages/warehouse/WarehouseShipmentsPage'
 import { WarehouseClientsPage } from '@/pages/warehouse/WarehouseClientsPage'
+import { WarehouseSettlementsPage } from '@/pages/warehouse/WarehouseSettlementsPage'
 import { WarehouseStoragePage } from '@/pages/warehouse/WarehouseStoragePage'
 import { ClientPortal, ClientShipmentDetail } from '@/pages/client/ClientPortal'
 
@@ -182,6 +183,14 @@ export default function App() {
                 element={
                   <ProtectedRoute allowedRoles={['warehouse_manager']}>
                     <WarehouseShipmentDetailPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/warehouse/collections"
+                element={
+                  <ProtectedRoute allowedRoles={['warehouse_manager']}>
+                    <WarehouseSettlementsPage />
                   </ProtectedRoute>
                 }
               />
