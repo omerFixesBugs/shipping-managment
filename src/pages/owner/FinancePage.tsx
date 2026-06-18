@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { DateField } from '@/components/ui/date-field'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { PageHeader } from '@/components/ui/page-header'
@@ -17,7 +18,7 @@ import {
 } from '@/components/ui/select'
 import { FINANCIAL_CATEGORY_LABELS } from '@/lib/constants'
 import { formatCurrency } from '@/lib/utils'
-import type { FinancialCategory, Shipment, ShipmentPnl } from '@/types/database'
+import type { FinancialCategory, ProductPnl, Shipment, ShipmentPnl } from '@/types/database'
 
 export function FinancePage() {
   const { user } = useAuth()
@@ -58,10 +59,30 @@ export function FinancePage() {
     },
   })
 
+  const { data: productPnl, isLoading: productLoading } = useQuery({
+    queryKey: ['product-pnl'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('product_pnl').select('*').order('request_title')
+      if (error) throw error
+      return data as ProductPnl[]
+    },
+  })
+
+  const productTotals = productPnl?.reduce(
+    (acc, row) => ({
+      revenue: acc.revenue + Number(row.client_price),
+      costs: acc.costs + Number(row.purchase_cost ?? 0),
+      profit: acc.profit + Number(row.margin ?? 0),
+      collected: acc.collected + Number(row.collected),
+      outstanding: acc.outstanding + Number(row.outstanding),
+    }),
+    { revenue: 0, costs: 0, profit: 0, collected: 0, outstanding: 0 }
+  ) ?? { revenue: 0, costs: 0, profit: 0, collected: 0, outstanding: 0 }
+
   const addEntry = useMutation({
     mutationFn: async () => {
       const { error } = await supabase.from('financial_entries').insert({
-        shipment_id: form.shipment_id,
+        shipment_id: form.shipment_id || null,
         category: form.category,
         amount: Number(form.amount),
         currency: form.currency,
@@ -119,6 +140,27 @@ export function FinancePage() {
 
       <div className="grid gap-4 md:grid-cols-3">
         <StatCard
+          label="Product Revenue (Listed)"
+          value={formatCurrency(productTotals.revenue)}
+          mono
+          hint={`Collected ${formatCurrency(productTotals.collected)}`}
+        />
+        <StatCard
+          label="Product Cost"
+          value={formatCurrency(productTotals.costs)}
+          mono
+          hint="Owner buy price"
+        />
+        <StatCard
+          label="Product Margin"
+          value={formatCurrency(productTotals.profit)}
+          mono
+          hint={`Outstanding ${formatCurrency(productTotals.outstanding)}`}
+        />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <StatCard
           label="Total Revenue"
           value={formatCurrency(totals.revenue)}
           mono
@@ -172,7 +214,11 @@ export function FinancePage() {
             </div>
             <div className="space-y-2">
               <Label>Date</Label>
-              <Input type="date" value={form.entry_date} onChange={(e) => setForm({ ...form, entry_date: e.target.value })} />
+              <DateField
+                value={form.entry_date}
+                onChange={(e) => setForm({ ...form, entry_date: e.target.value })}
+                showClear={false}
+              />
             </div>
             <div className="md:col-span-2">
               <Button onClick={() => addEntry.mutate()} disabled={!form.shipment_id || !form.amount}>
@@ -182,6 +228,56 @@ export function FinancePage() {
           </CardContent>
         </Card>
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Product P&L</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {productLoading ? (
+            <p className="text-muted-foreground">Loading…</p>
+          ) : !productPnl?.length ? (
+            <p className="text-sm text-muted-foreground">No product pricing data yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="pb-3 font-medium">Product</th>
+                    <th className="pb-3 font-medium">Client</th>
+                    <th className="pb-3 font-medium">Mode</th>
+                    <th className="pb-3 font-medium text-right">Buy</th>
+                    <th className="pb-3 font-medium text-right">Sell</th>
+                    <th className="pb-3 font-medium text-right">Margin</th>
+                    <th className="pb-3 font-medium text-right">Advance</th>
+                    <th className="pb-3 font-medium text-right">Collected</th>
+                    <th className="pb-3 font-medium text-right">Due</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {productPnl.map((row) => (
+                    <tr key={row.pricing_id} className="border-b last:border-0">
+                      <td className="py-3 font-medium">{row.product_name}</td>
+                      <td className="py-3">{row.client_name ?? '—'}</td>
+                      <td className="py-3 capitalize">{row.request_mode.replace('_', ' ')}</td>
+                      <td className="py-3 text-right text-red-600">
+                        {row.purchase_cost != null ? formatCurrency(Number(row.purchase_cost), row.currency) : '—'}
+                      </td>
+                      <td className="py-3 text-right">{formatCurrency(Number(row.client_price), row.currency)}</td>
+                      <td className="py-3 text-right font-semibold text-emerald-600">
+                        {formatCurrency(Number(row.margin), row.currency)}
+                      </td>
+                      <td className="py-3 text-right">{formatCurrency(Number(row.advance_amount), row.currency)}</td>
+                      <td className="py-3 text-right">{formatCurrency(Number(row.collected), row.currency)}</td>
+                      <td className="py-3 text-right text-amber-600">{formatCurrency(Number(row.outstanding), row.currency)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">

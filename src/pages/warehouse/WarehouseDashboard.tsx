@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Bell, CheckCircle2, Package, Plus, ShoppingCart, Truck } from 'lucide-react'
@@ -9,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { PageHeader } from '@/components/ui/page-header'
 import { StatCard } from '@/components/ui/stat-card'
 import { ShipmentStatusBadge, ProcurementStatusBadge } from '@/components/StatusBadge'
+import { AddShipmentDialog } from '@/components/AddShipmentDialog'
 import { HUB_LABELS } from '@/lib/constants'
 import { cn, formatDateTime } from '@/lib/utils'
 import type { ProcurementRequest, Shipment } from '@/types/database'
@@ -16,6 +18,8 @@ import type { ProcurementRequest, Shipment } from '@/types/database'
 export function WarehouseDashboard() {
   const { profile } = useAuth()
   const hub = profile?.hub
+  const isBd = hub === 'bangladesh'
+  const [addOpen, setAddOpen] = useState(false)
 
   const { data: stats } = useQuery({
     queryKey: ['warehouse-stats', hub],
@@ -80,15 +84,22 @@ export function WarehouseDashboard() {
 
   return (
     <div className="space-y-6">
+      <AddShipmentDialog open={addOpen} onOpenChange={setAddOpen} />
       <PageHeader
         title={`${hub ? HUB_LABELS[hub] : ''} Hub Operations`}
         description="Daily workload, inbound cargo, and procurement at your facility."
         actions={
-          <Button asChild>
-            <Link to="/warehouse/shipments/new">
+          isBd ? (
+            <Button asChild>
+              <Link to="/warehouse/procurement/new">
+                <Plus className="h-4 w-4" /> New Request
+              </Link>
+            </Button>
+          ) : (
+            <Button onClick={() => setAddOpen(true)}>
               <Plus className="h-4 w-4" /> New Shipment
-            </Link>
-          </Button>
+            </Button>
+          )
         }
       />
 

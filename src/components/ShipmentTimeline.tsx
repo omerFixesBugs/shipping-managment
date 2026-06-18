@@ -7,12 +7,54 @@ import type { ShipmentStatus } from '@/types/database'
  * Visual progress of a shipment through its lifecycle so users can see
  * exactly where it is and what the next step is.
  */
-export function ShipmentTimeline({ status }: { status: ShipmentStatus }) {
+export function ShipmentTimeline({
+  status,
+  variant = 'vertical',
+}: {
+  status: ShipmentStatus
+  variant?: 'vertical' | 'horizontal'
+}) {
   const currentIndex = SHIPMENT_STATUS_ORDER.indexOf(status)
   const nextStatus =
     currentIndex >= 0 && currentIndex < SHIPMENT_STATUS_ORDER.length - 1
       ? SHIPMENT_STATUS_ORDER[currentIndex + 1]
       : null
+
+  if (variant === 'horizontal') {
+    return (
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-1">
+          {SHIPMENT_STATUS_ORDER.map((s, i) => {
+            const done = i < currentIndex
+            const active = i === currentIndex
+            return (
+              <div key={s} className="flex items-center gap-1">
+                <span
+                  className={cn(
+                    'rounded-full px-2 py-0.5 text-[10px] font-medium leading-tight',
+                    done && 'text-white',
+                    active && 'font-semibold text-white ring-2 ring-[var(--hub)] ring-offset-1',
+                    !done && !active && 'bg-muted text-muted-foreground'
+                  )}
+                  style={done || active ? { backgroundColor: 'var(--hub)' } : undefined}
+                >
+                  {SHIPMENT_STATUS_LABELS[s]}
+                </span>
+                {i < SHIPMENT_STATUS_ORDER.length - 1 && (
+                  <span className="text-[10px] text-muted-foreground">›</span>
+                )}
+              </div>
+            )
+          })}
+        </div>
+        {nextStatus && (
+          <p className="text-[11px] text-muted-foreground">
+            Next: <span className="font-medium text-foreground">{SHIPMENT_STATUS_LABELS[nextStatus]}</span>
+          </p>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-3">

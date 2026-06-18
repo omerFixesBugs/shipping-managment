@@ -1,7 +1,8 @@
-import { Link, Outlet, useLocation } from 'react-router-dom'
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Box,
   DollarSign,
+  HandCoins,
   LayoutDashboard,
   LogOut,
   Moon,
@@ -14,6 +15,7 @@ import {
   Users,
   UserCog,
   Globe,
+  Warehouse,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { useTheme } from '@/hooks/useTheme'
@@ -21,13 +23,15 @@ import { NotificationBell } from '@/components/layout/NotificationBell'
 import { cn } from '@/lib/utils'
 import { getWorkspaceTheme } from '@/lib/constants'
 import type { CSSProperties } from 'react'
-import type { UserRole } from '@/types/database'
+import type { HubType, UserRole } from '@/types/database'
 
 interface NavItem {
   label: string
   href: string
   icon: React.ComponentType<{ className?: string }>
   roles: UserRole[]
+  /** When set, only show for warehouse managers whose hub is included. */
+  hubs?: HubType[]
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -40,7 +44,9 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Employees', href: '/owner/employees', icon: UserCog, roles: ['owner'] },
   { label: 'Hub Dashboard', href: '/warehouse', icon: Box, roles: ['warehouse_manager'] },
   { label: 'Procurement', href: '/warehouse/procurement', icon: ShoppingCart, roles: ['warehouse_manager'] },
+  { label: 'Storage', href: '/warehouse/storage', icon: Warehouse, roles: ['warehouse_manager'], hubs: ['dubai', 'china', 'bangladesh'] },
   { label: 'Shipments', href: '/warehouse/shipments', icon: Package, roles: ['warehouse_manager'] },
+  { label: 'Collections', href: '/warehouse/collections', icon: HandCoins, roles: ['warehouse_manager'], hubs: ['bangladesh'] },
   { label: 'Clients', href: '/warehouse/clients', icon: Users, roles: ['warehouse_manager'] },
   { label: 'My Shipments', href: '/client', icon: Package, roles: ['client'] },
 ]
@@ -52,7 +58,7 @@ interface SidebarCta {
 
 const SIDEBAR_CTA: Partial<Record<UserRole, SidebarCta>> = {
   owner: { label: 'New Request', href: '/owner/procurement/new' },
-  warehouse_manager: { label: 'New Shipment', href: '/warehouse/shipments/new' },
+  warehouse_manager: { label: 'New Shipment', href: '/warehouse/shipments' },
 }
 
 function initials(name: string | undefined) {
@@ -70,15 +76,30 @@ export function AppLayout() {
   const { profile, signOut } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const location = useLocation()
+  const navigate = useNavigate()
 
-  const visibleNav = NAV_ITEMS.filter((item) => profile && item.roles.includes(profile.role))
-  const workspace = getWorkspaceTheme(profile?.role, profile?.hub)
-  const cta = profile ? SIDEBAR_CTA[profile.role] : undefined
-
-  const activeItem = visibleNav.find(
+  const visibleNav = NAV_ITEMS.filter(
     (item) =>
-      location.pathname === item.href || location.pathname.startsWith(item.href + '/')
+      profile &&
+      item.roles.includes(profile.role) &&
+      (!item.hubs || (profile.hub != null && item.hubs.includes(profile.hub)))
   )
+  const workspace = getWorkspaceTheme(profile?.role, profile?.hub)
+  const isBd = profile?.role === 'warehouse_manager' && profile?.hub === 'bangladesh'
+  const cta = profile
+    ? isBd
+      ? { label: 'New Request', href: '/warehouse/procurement/new' }
+      : SIDEBAR_CTA[profile.role]
+    : undefined
+
+  // Longest-prefix match so /owner/shipments doesn't activate /owner dashboard
+  const activeItem = visibleNav.reduce<NavItem | undefined>((best, item) => {
+    const matches =
+      location.pathname === item.href || location.pathname.startsWith(item.href + '/')
+    if (!matches) return best
+    if (!best || item.href.length > best.href.length) return item
+    return best
+  }, undefined)
 
   const hubStyle = {
     '--hub': workspace.accent,
@@ -106,13 +127,24 @@ export function AppLayout() {
         {/* Primary CTA */}
         {cta ? (
           <div className="px-3 pb-2">
-            <Link
-              to={cta.href}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--color-brand)] px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-600"
-            >
-              <Plus className="h-4 w-4" />
-              {cta.label}
-            </Link>
+            {profile?.role === 'warehouse_manager' ? (
+              <button
+                type="button"
+                onClick={() => navigate(cta.href, { state: { openCreate: true } })}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--color-brand)] px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-600"
+              >
+                <Plus className="h-4 w-4" />
+                {cta.label}
+              </button>
+            ) : (
+              <Link
+                to={cta.href}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--color-brand)] px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-600"
+              >
+                <Plus className="h-4 w-4" />
+                {cta.label}
+              </Link>
+            )}
           </div>
         ) : null}
 

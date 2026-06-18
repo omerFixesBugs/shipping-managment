@@ -68,6 +68,29 @@ async function handleShipmentStatus(supabase: any, body: { shipmentId: string; n
     return jsonResponse({ error: updateError.message }, 400)
   }
 
+  // Products reserved on this shipment move out of origin storage when it actually ships.
+  if (newStatus === 'in_transit_to_bangladesh') {
+    await supabase
+      .from('warehouse_inventory')
+      .update({ status: 'shipped' })
+      .eq('shipment_id', shipmentId)
+      .eq('status', 'in_storage')
+      .neq('hub', 'bangladesh')
+
+    await supabase
+      .from('shipment_items')
+      .update({ status: 'in_transit' })
+      .eq('shipment_id', shipmentId)
+  }
+
+  if (newStatus === 'arrived_bangladesh') {
+    await supabase
+      .from('shipment_items')
+      .update({ status: 'awaiting_receipt' })
+      .eq('shipment_id', shipmentId)
+      .in('status', ['in_transit'])
+  }
+
   await supabase.from('shipment_events').insert({
     shipment_id: shipmentId,
     from_status: fromStatus,
@@ -146,6 +169,25 @@ async function handleProcurementStatus(supabase: any, body: { requestId: string;
       if (mgr.phone) {
         await sendSms(supabase, mgr.phone,
           `LogiFlow: New procurement request "${request.title}" awaiting your quote.`)
+      }
+    }
+
+    // If a BD admin (non-owner) raised this request, keep owners in the loop.
+    let requesterRole: string | null = null
+    if (request.requested_by) {
+      const reqProfile = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', request.requested_by)
+        .single()
+      requesterRole = reqProfile.data?.role ?? null
+    }
+    if (requesterRole && requesterRole !== 'owner') {
+      const owners = await supabase.from('profiles').select('id, phone').eq('role', 'owner')
+      for (const owner of owners.data ?? []) {
+        await createNotification(supabase, owner.id, 'New BD Procurement Request',
+          `A new procurement request "${request.title}" was raised for the ${request.target_hub} hub.`,
+          `/owner/procurement/${requestId}`)
       }
     }
   }

@@ -9,6 +9,7 @@ import { NotificationsPage } from '@/pages/NotificationsPage'
 import { OwnerDashboard } from '@/pages/owner/OwnerDashboard'
 import { ClientsPage } from '@/pages/owner/ClientsPage'
 import { ProcurementPage } from '@/pages/owner/ProcurementPage'
+import { ProcurementStatusListPage } from '@/pages/owner/ProcurementStatusListPage'
 import { ProcurementFormPage } from '@/pages/owner/ProcurementFormPage'
 import { ShipmentsPage } from '@/pages/owner/ShipmentsPage'
 import { ShipmentFormPage } from '@/pages/owner/ShipmentFormPage'
@@ -25,8 +26,9 @@ import {
   WarehouseShipmentsListPage,
   WarehouseShipmentDetailPage,
 } from '@/pages/warehouse/WarehouseShipmentsPage'
-import { WarehouseShipmentCreatePage } from '@/pages/warehouse/WarehouseShipmentCreatePage'
 import { WarehouseClientsPage } from '@/pages/warehouse/WarehouseClientsPage'
+import { WarehouseSettlementsPage } from '@/pages/warehouse/WarehouseSettlementsPage'
+import { WarehouseStoragePage } from '@/pages/warehouse/WarehouseStoragePage'
 import { ClientPortal, ClientShipmentDetail } from '@/pages/client/ClientPortal'
 
 const queryClient = new QueryClient({
@@ -73,6 +75,14 @@ export default function App() {
                 element={
                   <ProtectedRoute allowedRoles={['owner']}>
                     <ProcurementPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/owner/procurement/status/:status"
+                element={
+                  <ProtectedRoute allowedRoles={['owner']}>
+                    <ProcurementStatusListPage />
                   </ProtectedRoute>
                 }
               />
@@ -150,6 +160,14 @@ export default function App() {
                 }
               />
               <Route
+                path="/warehouse/procurement/new"
+                element={
+                  <ProtectedRoute allowedRoles={['warehouse_manager']}>
+                    <ProcurementFormPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
                 path="/warehouse/procurement/:id"
                 element={
                   <ProtectedRoute allowedRoles={['warehouse_manager']}>
@@ -167,17 +185,29 @@ export default function App() {
               />
               <Route
                 path="/warehouse/shipments/new"
-                element={
-                  <ProtectedRoute allowedRoles={['warehouse_manager']}>
-                    <WarehouseShipmentCreatePage />
-                  </ProtectedRoute>
-                }
+                element={<Navigate to="/warehouse/shipments" replace />}
               />
               <Route
                 path="/warehouse/shipments/:id"
                 element={
                   <ProtectedRoute allowedRoles={['warehouse_manager']}>
                     <WarehouseShipmentDetailPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/warehouse/collections"
+                element={
+                  <ProtectedRoute allowedRoles={['warehouse_manager']}>
+                    <WarehouseSettlementsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/warehouse/storage"
+                element={
+                  <ProtectedRoute allowedRoles={['warehouse_manager']}>
+                    <WarehouseStoragePage />
                   </ProtectedRoute>
                 }
               />

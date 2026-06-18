@@ -48,8 +48,8 @@ export function WarehouseClientsPage() {
     },
   })
 
-  // Only BD warehouse can add clients
-  const canAdd = profile?.hub === 'bangladesh'
+  // Any warehouse manager can register clients
+  const canAdd = profile?.role === 'warehouse_manager'
 
   return (
     <div className="space-y-6">
@@ -109,12 +109,6 @@ export function WarehouseClientsPage() {
           </Dialog>
         )}
       </div>
-
-      {!canAdd && (
-        <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-          Only Bangladesh hub managers can add clients. Dubai and China hubs can view this list.
-        </p>
-      )}
 
       <Card>
         <CardHeader>
