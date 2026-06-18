@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { DateField } from '@/components/ui/date-field'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { PageHeader } from '@/components/ui/page-header'
@@ -213,7 +214,11 @@ export function FinancePage() {
             </div>
             <div className="space-y-2">
               <Label>Date</Label>
-              <Input type="date" value={form.entry_date} onChange={(e) => setForm({ ...form, entry_date: e.target.value })} />
+              <DateField
+                value={form.entry_date}
+                onChange={(e) => setForm({ ...form, entry_date: e.target.value })}
+                showClear={false}
+              />
             </div>
             <div className="md:col-span-2">
               <Button onClick={() => addEntry.mutate()} disabled={!form.shipment_id || !form.amount}>

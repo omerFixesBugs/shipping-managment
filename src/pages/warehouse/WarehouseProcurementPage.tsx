@@ -10,7 +10,7 @@ import { Card } from '@/components/ui/card'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { HUB_LABELS } from '@/lib/constants'
+import { HUB_LABELS, SHIPMENT_TYPE_LABELS } from '@/lib/constants'
 import { ProcurementProductSummaryDialog } from '@/components/ProcurementProductSummaryDialog'
 import { ProcurementStatusBadge } from '@/components/StatusBadge'
 import {
@@ -18,7 +18,6 @@ import {
   ProcurementStatusBoard,
   type ProcurementProductRow,
 } from '@/components/ProcurementStatusBoard'
-import { hubSkipsQuote } from '@/lib/productPricing'
 
 // Hub-side status labels — "sent" from admin = "new request" to hub
 const HUB_STATUS_CONFIG: Record<string, { label: string; dot: string; className: string }> = {
@@ -41,6 +40,7 @@ function HubStatusBadge({ status }: { status: ProcurementStatus }) {
   )
 }
 import { useExchangeRates, SUPPORTED_CURRENCIES, formatWithSymbol, convertAmount } from '@/hooks/useExchangeRates'
+import { buildProductCostsFromQuote, productQuotesToBreakdown } from '@/lib/quotePricing'
 import { useState, useMemo, useEffect } from 'react'
 import { Plus, Search, RefreshCw } from 'lucide-react'
 import type { ProcurementRequest, ProcurementStatus } from '@/types/database'
@@ -126,6 +126,7 @@ export function WarehouseProcurementListPage() {
           isLoading={isLoading}
           onProductClick={setSelectedRow}
           showHub={isBd}
+          groupByRequest={!isBd}
           hideEmptyColumns={search.trim().length > 0}
           emptyMessage={
             isBd
@@ -161,11 +162,13 @@ export function WarehouseProcurementListPage() {
   )
 }
 
-interface QuoteLineItem {
-  label: string
+interface QuoteProductBlock {
+  itemIndex: number
+  productName: string
   quantity: number
   unitPrice: string
-  type: 'item' | 'packaging' | 'shipping' | 'other'
+  packagingPrice: string
+  shippingPrice: string
 }
 
 export function WarehouseProcurementDetailPage() {
@@ -176,7 +179,7 @@ export function WarehouseProcurementDetailPage() {
 
   const [currency, setCurrency] = useState('USD')
   const [quoteNotes, setQuoteNotes] = useState('')
-  const [lineItems, setLineItems] = useState<QuoteLineItem[]>([])
+  const [productQuotes, setProductQuotes] = useState<QuoteProductBlock[]>([])
   const [quoteInitialized, setQuoteInitialized] = useState(false)
 
   const { data: request, error: requestError } = useQuery<ProcurementRequest>({
@@ -202,31 +205,40 @@ export function WarehouseProcurementDetailPage() {
 
   useEffect(() => {
     if (!quoteInitialized && request?.status === 'sent') {
-      setLineItems([
-        ...request.items.map((item) => ({
-          label: item.name,
+      setProductQuotes(
+        request.items.map((item, itemIndex) => ({
+          itemIndex,
+          productName: item.name,
           quantity: item.quantity,
           unitPrice: '',
-          type: 'item' as const,
-        })),
-        { label: 'Packaging', quantity: 1, unitPrice: '', type: 'packaging' },
-        { label: 'Shipping / Freight', quantity: 1, unitPrice: '', type: 'shipping' },
-      ])
+          packagingPrice: '',
+          shippingPrice: '',
+        }))
+      )
       setQuoteInitialized(true)
     }
   }, [request, quoteInitialized])
 
   const { data: rates, isLoading: ratesLoading, refetch: refetchRates } = useExchangeRates(currency)
 
+  const lineItems = useMemo(
+    () => productQuotesToBreakdown(productQuotes),
+    [productQuotes]
+  )
+
   const totalInCurrency = useMemo(() => {
-    return lineItems.reduce((sum, li) => {
-      const price = parseFloat(li.unitPrice) || 0
-      return sum + price * li.quantity
-    }, 0)
+    return lineItems.reduce((sum, li) => sum + (Number(li.cost) || 0), 0)
   }, [lineItems])
 
-  const updateLine = (index: number, patch: Partial<QuoteLineItem>) => {
-    setLineItems((prev) => prev.map((li, i) => (i === index ? { ...li, ...patch } : li)))
+  const updateProductQuote = (index: number, patch: Partial<QuoteProductBlock>) => {
+    setProductQuotes((prev) => prev.map((pq, i) => (i === index ? { ...pq, ...patch } : pq)))
+  }
+
+  const productQuoteSubtotal = (pq: QuoteProductBlock) => {
+    const unit = parseFloat(pq.unitPrice) || 0
+    const packaging = parseFloat(pq.packagingPrice) || 0
+    const shipping = parseFloat(pq.shippingPrice) || 0
+    return unit * pq.quantity + packaging + shipping
   }
 
   const { data: linkedShipment } = useQuery({
@@ -244,10 +256,11 @@ export function WarehouseProcurementDetailPage() {
     mutationFn: async () => {
       const breakdown = lineItems.map((li) => ({
         type: li.type,
-        item: li.label,
+        item: li.item,
         quantity: li.quantity,
-        unitPrice: parseFloat(li.unitPrice) || 0,
-        cost: (parseFloat(li.unitPrice) || 0) * li.quantity,
+        unitPrice: li.unitPrice,
+        cost: li.cost,
+        itemIndex: li.itemIndex,
       }))
 
       const { error: quoteError } = await supabase.from('quotes').insert({
@@ -310,14 +323,31 @@ export function WarehouseProcurementDetailPage() {
     },
   })
 
+  const canManageRequest = profile?.hub === request?.target_hub
+
+  const { data: hubPricing } = useQuery({
+    queryKey: ['product-pricing', id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('product_pricing')
+        .select('*')
+        .eq('request_id', id!)
+        .order('item_index')
+      if (error) throw error
+      return data
+    },
+    enabled:
+      !!request &&
+      canManageRequest &&
+      ['approved', 'purchasing', 'ready_to_ship'].includes(request.status),
+  })
+
   if (requestError) return <p className="p-6 text-destructive">Failed to load request: {String(requestError)}</p>
   if (!request) return <p className="p-6 text-muted-foreground">Loading…</p>
 
   const quote = request.quotes?.[0]
-  // Only the hub the request targets can quote / progress it. BD (the requester) is read-only here.
-  const canManage = profile?.hub === request.target_hub
-  const showQuoteForm = canManage && request.status === 'sent' && !hubSkipsQuote(request.request_mode)
-  const showDirectBuyConfirm = canManage && request.status === 'sent' && hubSkipsQuote(request.request_mode)
+  const canManage = canManageRequest
+  const showQuoteForm = canManage && request.status === 'sent'
 
   return (
     <div className="flex h-[calc(100vh-7rem)] flex-col gap-3">
@@ -329,10 +359,16 @@ export function WarehouseProcurementDetailPage() {
             Incoming Request · {HUB_LABELS[request.target_hub]}
           </p>
           <h2 className="text-lg font-bold">{request.title}</h2>
-          <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             {request.clients?.name && (
               <span>Client: <span className="font-medium text-foreground">{request.clients.name}</span></span>
             )}
+            <span>
+              Ownership:{' '}
+              <span className="font-medium text-foreground">
+                {SHIPMENT_TYPE_LABELS[request.shipment_type]}
+              </span>
+            </span>
             {request.notes && <span>{request.notes}</span>}
           </div>
         </div>
@@ -394,9 +430,6 @@ export function WarehouseProcurementDetailPage() {
                   {item.deadline && (
                     <span>Deadline: <span className="font-medium text-foreground">{item.deadline}</span></span>
                   )}
-                  {item.expectedSellingPrice != null && (
-                    <span>Exp. sell: <span className="font-medium text-foreground">${item.expectedSellingPrice.toFixed(2)}</span></span>
-                  )}
                   {item.notes && <span className="w-full">{item.notes}</span>}
                 </div>
               </div>
@@ -407,25 +440,7 @@ export function WarehouseProcurementDetailPage() {
         {/* ── Right: quote form / quote summary / actions ── */}
         <Card className="flex flex-col overflow-hidden">
 
-          {/* Direct buy — hub confirms availability, no quote */}
-          {showDirectBuyConfirm && (
-            <>
-              <div className="shrink-0 border-b px-5 py-3">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-brand)]">Direct Buy Request</h3>
-              </div>
-              <div className="flex-1 overflow-y-auto p-5 space-y-4">
-                <p className="text-sm text-muted-foreground">
-                  Owner set client pricing. Confirm product is available, purchase it, then progress to storage.
-                  Add shipping & packaging costs when dispatching cargo.
-                </p>
-                <Button onClick={() => updateStatus.mutate('purchasing')}>
-                  Confirm Available & Start Purchasing
-                </Button>
-              </div>
-            </>
-          )}
-
-          {/* Quote form — status: sent (only the quoting hub, sourced mode) */}
+          {/* Quote form — hub enters buy cost per product */}
           {showQuoteForm && (
             <>
               <div className="flex shrink-0 items-center justify-between border-b px-5 py-3">
@@ -443,73 +458,80 @@ export function WarehouseProcurementDetailPage() {
                 </div>
               </div>
 
-              {/* Line items table */}
+              {/* Per-product quote blocks */}
               <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b text-left text-xs text-muted-foreground">
-                      <th className="pb-2 font-medium w-5"></th>
-                      <th className="pb-2 font-medium">Description</th>
-                      <th className="pb-2 font-medium w-24 text-right">Qty</th>
-                      <th className="pb-2 font-medium w-44 text-right">Unit Price ({currency})</th>
-                      <th className="pb-2 font-medium w-28 text-right">Subtotal</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {lineItems.map((li, i) => {
-                      const subtotal = (parseFloat(li.unitPrice) || 0) * li.quantity
-                      const dotColor = li.type === 'item' ? 'var(--hub)' : li.type === 'packaging' ? '#8b5cf6' : '#f59e0b'
-                      return (
-                        <tr key={i}>
-                          <td className="py-2 pr-1">
-                            <span className="mt-2 block h-2 w-2 rounded-full" style={{ backgroundColor: dotColor }} />
-                          </td>
-                          <td className="py-2 pr-3">
-                            <Input
-                              value={li.label}
-                              onChange={(e) => updateLine(i, { label: e.target.value })}
-                              className="h-8"
-                            />
-                          </td>
-                          <td className="py-2 pr-3">
-                            <Input
-                              type="number" min={1}
-                              value={li.quantity}
-                              onChange={(e) => updateLine(i, { quantity: Number(e.target.value) })}
-                              className="text-right"
-                            />
-                          </td>
-                          <td className="py-2 pr-3">
-                            <Input
-                              type="number" min={0} step="0.01" placeholder="0.00"
-                              value={li.unitPrice}
-                              onChange={(e) => updateLine(i, { unitPrice: e.target.value })}
-                              className="text-right"
-                            />
-                          </td>
-                          <td className="py-2 text-right font-semibold">
-                            {formatWithSymbol(subtotal, currency)}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t">
-                      <td colSpan={4} className="pt-3 font-semibold text-right pr-3">Total ({currency})</td>
-                      <td className="pt-3 text-right text-lg font-bold" style={{ color: 'var(--hub)' }}>
-                        {formatWithSymbol(totalInCurrency, currency)}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
+                <p className="text-xs text-muted-foreground">
+                  Set product buy price, packaging, and freight separately for each line.
+                </p>
 
-                <Button
-                  type="button" variant="outline" size="sm"
-                  onClick={() => setLineItems([...lineItems, { label: 'Additional cost', quantity: 1, unitPrice: '', type: 'other' }])}
-                >
-                  + Add line
-                </Button>
+                {productQuotes.map((pq, i) => (
+                  <div key={pq.itemIndex} className="rounded-xl border bg-background p-4 shadow-sm space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Product {i + 1}
+                        </p>
+                        <p className="font-semibold">{pq.productName}</p>
+                      </div>
+                      <span className="shrink-0 rounded bg-muted px-2 py-0.5 text-xs font-medium">
+                        Qty {pq.quantity}
+                      </span>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Unit buy price ({currency})</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          placeholder="0.00"
+                          value={pq.unitPrice}
+                          onChange={(e) => updateProductQuote(i, { unitPrice: e.target.value })}
+                          className="h-9"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Packaging ({currency})</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          placeholder="0.00"
+                          value={pq.packagingPrice}
+                          onChange={(e) => updateProductQuote(i, { packagingPrice: e.target.value })}
+                          className="h-9"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Freight ({currency})</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          placeholder="0.00"
+                          value={pq.shippingPrice}
+                          onChange={(e) => updateProductQuote(i, { shippingPrice: e.target.value })}
+                          className="h-9"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end border-t pt-2 text-sm">
+                      <span className="text-muted-foreground">Line total:&nbsp;</span>
+                      <span className="font-semibold" style={{ color: 'var(--hub)' }}>
+                        {formatWithSymbol(productQuoteSubtotal(pq), currency)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+
+                <div className="flex items-center justify-between rounded-lg border bg-muted/20 px-4 py-3">
+                  <span className="font-semibold">Quote total ({currency})</span>
+                  <span className="text-lg font-bold" style={{ color: 'var(--hub)' }}>
+                    {formatWithSymbol(totalInCurrency, currency)}
+                  </span>
+                </div>
 
                 {/* Live conversion */}
                 <div className="rounded-lg border bg-muted/20 p-3">
@@ -563,7 +585,7 @@ export function WarehouseProcurementDetailPage() {
           )}
 
           {/* Quote summary / status (also the read-only view for the requester) */}
-          {!showQuoteForm && !showDirectBuyConfirm && (
+          {!showQuoteForm && (
             <>
               <div className="shrink-0 border-b px-5 py-3">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-brand)]">Quote & Status</h3>
@@ -576,31 +598,75 @@ export function WarehouseProcurementDetailPage() {
                       <span className="text-xs text-muted-foreground uppercase tracking-wide">Quote Total</span>
                       <span className="text-2xl font-bold">{formatWithSymbol(quote.total_cost, quote.currency)}</span>
                     </div>
-                    {(quote.breakdown as {type: string; item: string; quantity: number; unitPrice: number; cost: number}[])?.length > 0 && (
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b text-left text-xs text-muted-foreground">
-                            <th className="pb-2 font-medium">Item</th>
-                            <th className="pb-2 font-medium text-right">Qty</th>
-                            <th className="pb-2 font-medium text-right">Unit</th>
-                            <th className="pb-2 font-medium text-right">Total</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(quote.breakdown as {item: string; quantity: number; unitPrice: number; cost: number}[]).map((b, i) => (
-                            <tr key={i} className="border-b last:border-0">
-                              <td className="py-2">{b.item}</td>
-                              <td className="py-2 text-right text-muted-foreground">{b.quantity}</td>
-                              <td className="py-2 text-right text-muted-foreground">{formatWithSymbol(b.unitPrice, quote.currency)}</td>
-                              <td className="py-2 text-right font-semibold">{formatWithSymbol(b.cost, quote.currency)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    {request.items.length > 0 && (
+                      <div className="space-y-3">
+                        {buildProductCostsFromQuote(
+                          request.items,
+                          (quote.breakdown ?? []) as Parameters<typeof buildProductCostsFromQuote>[1]
+                        ).map((costs, i) => (
+                          <div key={i} className="rounded-lg border p-3 space-y-2">
+                            <p className="font-semibold">{request.items[i]?.name}</p>
+                            <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                              <dt className="text-muted-foreground">Product buy</dt>
+                              <dd className="text-right font-data">{formatWithSymbol(costs.productCost, quote.currency)}</dd>
+                              {costs.packagingCost > 0 && (
+                                <>
+                                  <dt className="text-muted-foreground">Packaging</dt>
+                                  <dd className="text-right font-data">{formatWithSymbol(costs.packagingCost, quote.currency)}</dd>
+                                </>
+                              )}
+                              {costs.shippingCost > 0 && (
+                                <>
+                                  <dt className="text-muted-foreground">Freight</dt>
+                                  <dd className="text-right font-data">{formatWithSymbol(costs.shippingCost, quote.currency)}</dd>
+                                </>
+                              )}
+                              {costs.otherCost > 0 && (
+                                <>
+                                  <dt className="text-muted-foreground">Other</dt>
+                                  <dd className="text-right font-data">{formatWithSymbol(costs.otherCost, quote.currency)}</dd>
+                                </>
+                              )}
+                              <dt className="font-medium">Line total</dt>
+                              <dd className="text-right font-data font-semibold">{formatWithSymbol(costs.totalCost, quote.currency)}</dd>
+                            </dl>
+                          </div>
+                        ))}
+                      </div>
                     )}
                     {quote.notes && (
                       <p className="rounded-md bg-muted/40 px-3 py-2 text-sm text-muted-foreground">{quote.notes}</p>
                     )}
+                  </div>
+                )}
+
+                {hubPricing && hubPricing.length > 0 && (
+                  <div className="space-y-2 rounded-lg border p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Approved Pricing (hub view)
+                    </p>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b text-left text-xs text-muted-foreground">
+                          <th className="pb-2">Product</th>
+                          <th className="pb-2 text-right">Buy</th>
+                          <th className="pb-2 text-right">Client</th>
+                          <th className="pb-2 text-right">Margin</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {hubPricing.map((p) => (
+                          <tr key={p.id} className="border-b last:border-0">
+                            <td className="py-2">{p.product_name}</td>
+                            <td className="py-2 text-right">{p.purchase_cost != null ? formatWithSymbol(p.purchase_cost, p.currency) : '—'}</td>
+                            <td className="py-2 text-right">{formatWithSymbol(p.client_price, p.currency)}</td>
+                            <td className="py-2 text-right text-emerald-600">
+                              {p.purchase_cost != null ? formatWithSymbol(p.client_price - p.purchase_cost, p.currency) : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
 

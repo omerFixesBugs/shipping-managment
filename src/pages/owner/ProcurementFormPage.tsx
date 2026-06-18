@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { CalendarDays, ExternalLink, ImagePlus, Loader2, Trash2, X } from 'lucide-react'
+import { CalendarDays, ExternalLink, ImagePlus, Loader2, Package, Search, ShoppingBag, Trash2, User, X, Zap, ArrowLeft } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
@@ -9,31 +9,37 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { ClientPicker } from '@/components/ClientPicker'
 import { ProcurementStatusBadge } from '@/components/StatusBadge'
+import { OptionCardGroup } from '@/components/ui/option-card'
+import { HubDestinationPicker } from '@/components/ui/hub-destination-picker'
+import { DateField } from '@/components/ui/date-field'
+import { PageHeader } from '@/components/ui/page-header'
 import { ORIGIN_HUBS, HUB_LABELS } from '@/lib/constants'
 import {
   REQUEST_MODE_HINTS,
   REQUEST_MODE_LABELS,
-  syncProductPricing,
   type ProductPricingInput,
 } from '@/lib/productPricing'
-import { cn, formatCurrency } from '@/lib/utils'
+import { buildProductCostsFromQuote, type QuoteBreakdownLine } from '@/lib/quotePricing'
+import {
+  approveProcurementRequest,
+  rejectProcurementRequest,
+  upsertSingleProductPricing,
+} from '@/lib/procurementApproval'
+import { formatCurrency } from '@/lib/utils'
 import type { Client, HubType, ProcurementItem, ProcurementRequest, ProcurementRequestMode, ProductPricing, ShipmentType } from '@/types/database'
 
 export function ProcurementFormPage() {
   const { id } = useParams()
   const isNew = !id || id === 'new'
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const queryClient = useQueryClient()
   const { user, profile } = useAuth()
   const basePath = profile?.role === 'owner' ? '/owner/procurement' : '/warehouse/procurement'
+  const returnTo = searchParams.get('return')
+  const focusItemIndex = searchParams.has('item') ? Number(searchParams.get('item')) : null
 
   const [title, setTitle] = useState('')
   const [targetHub, setTargetHub] = useState<HubType>('dubai')
@@ -45,7 +51,7 @@ export function ProcurementFormPage() {
   const [clientId, setClientId] = useState('')
   const [shipmentType, setShipmentType] = useState<ShipmentType>('client_owned')
   const [requestMode, setRequestMode] = useState<ProcurementRequestMode>('sourced')
-  const [itemPricing, setItemPricing] = useState<Record<number, { purchaseCost: string; clientPrice: string; advanceAmount: string }>>({})
+  const [itemPricing, setItemPricing] = useState<Record<number, { clientPrice: string; advanceAmount: string }>>({})
   const [selectedClientId, setSelectedClientId] = useState<string>('')
   const [createError, setCreateError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -53,7 +59,7 @@ export function ProcurementFormPage() {
   const { data: clientsList } = useQuery({
     queryKey: ['clients'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('clients').select('id, name').order('name')
+      const { data, error } = await supabase.from('clients').select('id, name, phone, email').order('name')
       if (error) throw error
       return data as Client[]
     },
@@ -87,16 +93,35 @@ export function ProcurementFormPage() {
     if (request?.client_id) setSelectedClientId(request.client_id)
   }, [request?.client_id])
 
-  const buildPricingInputs = (): ProductPricingInput[] =>
-    items.map((item, itemIndex) => ({
+  useEffect(() => {
+    if (!request || !productPricing?.length) return
+    const next: Record<number, { clientPrice: string; advanceAmount: string }> = {}
+    for (const p of productPricing) {
+      next[p.item_index] = {
+        clientPrice: p.client_price > 0 ? String(p.client_price) : '',
+        advanceAmount: p.advance_amount > 0 ? String(p.advance_amount) : '',
+      }
+    }
+    setItemPricing((prev) => ({ ...next, ...prev }))
+  }, [request?.id, productPricing])
+
+  const buildPricingInputs = (
+    quoteBreakdown?: QuoteBreakdownLine[],
+    quoteCurrency = 'USD'
+  ): ProductPricingInput[] => {
+    const costs = quoteBreakdown?.length
+      ? buildProductCostsFromQuote(items.length ? items : request?.items ?? [], quoteBreakdown)
+      : null
+    const productItems = items.length ? items : request?.items ?? []
+    return productItems.map((item, itemIndex) => ({
       itemIndex,
       productName: item.name,
-      purchaseCost: itemPricing[itemIndex]?.purchaseCost
-        ? Number(itemPricing[itemIndex].purchaseCost)
-        : null,
-      clientPrice: Number(itemPricing[itemIndex]?.clientPrice || item.expectedSellingPrice || 0),
+      purchaseCost: costs ? costs[itemIndex]?.totalCost ?? null : null,
+      clientPrice: Number(itemPricing[itemIndex]?.clientPrice || 0),
       advanceAmount: Number(itemPricing[itemIndex]?.advanceAmount || 0),
+      currency: quoteCurrency,
     }))
+  }
 
   const updateItem = (index: number, patch: Partial<ProcurementItem>) => {
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...patch } : it)))
@@ -179,9 +204,6 @@ export function ProcurementFormPage() {
             body: { type: 'procurement_status', requestId: data!.id, newStatus: 'sent' },
           })
         }
-        if (profile?.role === 'owner') {
-          await syncProductPricing(data!.id, clientId || null, items, buildPricingInputs())
-        }
         return data
       }
 
@@ -190,9 +212,6 @@ export function ProcurementFormPage() {
         .update(fullPayload)
         .eq('id', id!)
       if (error) throw error
-      if (profile?.role === 'owner') {
-        await syncProductPricing(id!, clientId || null, items, buildPricingInputs())
-      }
       if (status === 'sent') {
         await supabase.functions.invoke('shipment-status', {
           body: { type: 'procurement_status', requestId: id, newStatus: 'sent' },
@@ -212,51 +231,56 @@ export function ProcurementFormPage() {
 
   const approveQuote = useMutation({
     mutationFn: async (action: 'approved' | 'rejected') => {
-      const { error: reqError } = await supabase
-        .from('procurement_requests')
-        .update({ status: action })
-        .eq('id', id!)
-      if (reqError) throw reqError
-
       const quote = request?.quotes?.[0]
-      if (quote) {
-        await supabase
-          .from('quotes')
-          .update({ status: action === 'approved' ? 'accepted' : 'rejected' })
-          .eq('id', quote.id)
+      if (action === 'rejected') {
+        await rejectProcurementRequest(id!, quote?.id)
+        return
       }
-
-      if (action === 'approved' && request) {
-        const inputs = buildPricingInputs().map((p) => {
-          if (!p.purchaseCost && quote) {
-            return { ...p, purchaseCost: Number(quote.total_cost) / Math.max(request.items.length, 1) }
-          }
-          return p
-        })
-        await syncProductPricing(id!, request.client_id, request.items, inputs)
-
-        const totalAdvance = inputs.reduce((s, p) => s + (p.advanceAmount || 0), 0)
-        if (totalAdvance > 0) {
-          await supabase.from('financial_entries').insert({
-            shipment_id: null,
-            procurement_request_id: id,
-            category: 'advance_payment',
-            amount: totalAdvance,
-            currency: 'USD',
-            description: `Client advance: ${request.title}`,
-            entry_date: new Date().toISOString().split('T')[0],
-            created_by: user!.id,
-          })
-        }
-      }
-
-      await supabase.functions.invoke('shipment-status', {
-        body: { type: 'procurement_status', requestId: id, newStatus: action },
+      const breakdown = (quote?.breakdown ?? []) as QuoteBreakdownLine[]
+      const inputs = buildPricingInputs(breakdown, quote?.currency ?? 'USD')
+      await approveProcurementRequest({
+        requestId: id!,
+        userId: user!.id,
+        request: request!,
+        quoteId: quote?.id,
+        pricingInputs: inputs,
       })
     },
-    onSuccess: () => {
+    onSuccess: (_, action) => {
       queryClient.invalidateQueries({ queryKey: ['procurement-request', id] })
       queryClient.invalidateQueries({ queryKey: ['procurement-requests'] })
+      queryClient.invalidateQueries({ queryKey: ['product-pricing', id] })
+      if (returnTo && action === 'approved') {
+        navigate(returnTo)
+      }
+    },
+  })
+
+  const saveProductPrice = useMutation({
+    mutationFn: async (itemIndex: number) => {
+      const quote = request?.quotes?.[0]
+      if (!quote || !request) throw new Error('Missing quote')
+      const breakdown = (quote.breakdown ?? []) as QuoteBreakdownLine[]
+      const costs = buildProductCostsFromQuote(request.items, breakdown)[itemIndex]
+      const price = Number(itemPricing[itemIndex]?.clientPrice || 0)
+      if (!price || price <= 0) throw new Error('Enter a client price')
+      await upsertSingleProductPricing(
+        id!,
+        request.client_id,
+        request.items[itemIndex],
+        itemIndex,
+        {
+          purchaseCost: costs?.totalCost ?? null,
+          clientPrice: price,
+          advanceAmount: Number(itemPricing[itemIndex]?.advanceAmount || 0),
+          currency: quote.currency,
+        }
+      )
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['product-pricing', id] })
+      queryClient.invalidateQueries({ queryKey: ['procurement-requests'] })
+      if (returnTo) navigate(returnTo)
     },
   })
 
@@ -275,8 +299,8 @@ export function ProcurementFormPage() {
 
   const createShipment = useMutation({
     mutationFn: async () => {
-      const assignedClientId = selectedClientId || request?.client_id || clientsList?.[0]?.id
-      if (!assignedClientId) throw new Error('No clients found. Please create a client first under Clients.')
+      const assignedClientId = selectedClientId || request?.client_id
+      if (!assignedClientId) throw new Error('Select a client before creating the shipment.')
 
       const { data, error } = await supabase
         .from('shipments')
@@ -306,9 +330,33 @@ export function ProcurementFormPage() {
   if (!isNew && request) {
     const quote = request.quotes?.[0]
     const modeLabel = REQUEST_MODE_LABELS[request.request_mode ?? 'sourced']
+    const itemLink = (index: number) => {
+      const params = new URLSearchParams()
+      params.set('item', String(index))
+      if (returnTo) params.set('return', returnTo)
+      return `/owner/procurement/${request.id}?${params.toString()}`
+    }
+    const visibleItemIndexes =
+      focusItemIndex != null && !Number.isNaN(focusItemIndex)
+        ? [focusItemIndex]
+        : request.items.map((_, i) => i)
+
     return (
       <div className="mx-auto max-w-2xl space-y-6">
+        {returnTo && (
+          <Button variant="ghost" size="sm" className="-ml-2 h-8 gap-1" asChild>
+            <Link to={returnTo}>
+              <ArrowLeft className="h-4 w-4" /> Back to list
+            </Link>
+          </Button>
+        )}
         <h2 className="text-2xl font-bold">{request.title}</h2>
+        {focusItemIndex != null && request.items[focusItemIndex] && (
+          <p className="text-sm text-muted-foreground">
+            Managing product {focusItemIndex + 1} of {request.items.length}:{' '}
+            <span className="font-medium text-foreground">{request.items[focusItemIndex].name}</span>
+          </p>
+        )}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -331,14 +379,67 @@ export function ProcurementFormPage() {
 
             <div className="space-y-3">
               {request.items.map((item, i) => (
-                <ItemSummary key={i} item={item} />
+                <div
+                  key={i}
+                  className={focusItemIndex === i ? 'rounded-lg ring-2 ring-[var(--color-brand)] ring-offset-2' : ''}
+                >
+                  <ItemSummary item={item} />
+                </div>
               ))}
             </div>
 
-            {quote && request.request_mode !== 'direct_buy' && (
-              <div className="rounded-lg border p-4">
-                <p className="font-medium">Quote: {formatCurrency(quote.total_cost, quote.currency)}</p>
-                <p className="text-sm text-muted-foreground">{quote.notes}</p>
+            {request.items.length > 1 && focusItemIndex != null && (
+              <div className="flex flex-wrap gap-2">
+                {request.items.map((item, i) => (
+                  <Button
+                    key={i}
+                    variant={focusItemIndex === i ? 'default' : 'outline'}
+                    size="sm"
+                    asChild
+                  >
+                    <Link to={itemLink(i)}>{item.name}</Link>
+                  </Button>
+                ))}
+              </div>
+            )}
+
+            {quote && (
+              <div className="rounded-lg border p-4 space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Hub Quote — {formatCurrency(quote.total_cost, quote.currency)}
+                </p>
+                {(quote.breakdown as QuoteBreakdownLine[])?.length > 0 && (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left text-xs text-muted-foreground">
+                        <th className="pb-2">Line</th>
+                        <th className="pb-2 text-right">Qty</th>
+                        <th className="pb-2 text-right">Unit</th>
+                        <th className="pb-2 text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(quote.breakdown as QuoteBreakdownLine[]).map((b, i) => (
+                        <tr key={i} className="border-b last:border-0">
+                          <td className="py-2">
+                            {b.item}
+                            {b.type !== 'item' && (
+                              <span className="ml-1 text-[10px] text-muted-foreground">({b.type})</span>
+                            )}
+                          </td>
+                          <td className="py-2 text-right text-muted-foreground">{b.quantity}</td>
+                          <td className="py-2 text-right text-muted-foreground">
+                            {formatCurrency(b.unitPrice, quote.currency)}
+                          </td>
+                          <td className="py-2 text-right font-medium">
+                            {formatCurrency(b.cost, quote.currency)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                {quote.notes && <p className="text-sm text-muted-foreground">{quote.notes}</p>}
               </div>
             )}
 
@@ -372,42 +473,121 @@ export function ProcurementFormPage() {
               </div>
             )}
 
-            {request.status === 'quoted' && request.request_mode !== 'direct_buy' && (
-              <div className="space-y-3 rounded-lg border border-dashed p-4">
-                <p className="text-sm text-muted-foreground">Set client price and record any advance before approving.</p>
-                {request.items.map((item, i) => (
-                  <div key={i} className="grid grid-cols-3 gap-2 text-sm">
-                    <span className="col-span-3 font-medium">{item.name}</span>
-                    <div>
-                      <Label className="text-xs">Buy price</Label>
-                      <Input
-                        type="number"
-                        value={itemPricing[i]?.purchaseCost ?? ''}
-                        onChange={(e) => setItemPricing({ ...itemPricing, [i]: { purchaseCost: e.target.value, clientPrice: itemPricing[i]?.clientPrice ?? String(item.expectedSellingPrice ?? ''), advanceAmount: itemPricing[i]?.advanceAmount ?? '' } })}
-                      />
+            {request.status === 'quoted' && quote && (
+              <div className="space-y-4 rounded-lg border border-dashed p-4">
+                <p className="text-sm text-muted-foreground">
+                  Hub buy costs below are read-only. Set client price per product, then approve.
+                </p>
+                {request.items.map((item, i) => {
+                  if (!visibleItemIndexes.includes(i)) return null
+                  const breakdown = (quote.breakdown ?? []) as QuoteBreakdownLine[]
+                  const costs = buildProductCostsFromQuote(request.items, breakdown)[i]
+                  const clientPrice = Number(itemPricing[i]?.clientPrice || 0)
+                  const margin = costs ? clientPrice - costs.totalCost : null
+                  return (
+                    <div key={i} className="rounded-lg border bg-muted/20 p-3 space-y-3">
+                      <p className="font-semibold">{item.name}</p>
+                      {costs && (
+                        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                          <dt className="text-muted-foreground">Product buy</dt>
+                          <dd className="text-right font-data">{formatCurrency(costs.productCost, quote.currency)}</dd>
+                          {costs.packagingCost > 0 && (
+                            <>
+                              <dt className="text-muted-foreground">Packaging</dt>
+                              <dd className="text-right font-data">{formatCurrency(costs.packagingCost, quote.currency)}</dd>
+                            </>
+                          )}
+                          {costs.shippingCost > 0 && (
+                            <>
+                              <dt className="text-muted-foreground">Freight</dt>
+                              <dd className="text-right font-data">{formatCurrency(costs.shippingCost, quote.currency)}</dd>
+                            </>
+                          )}
+                          {costs.otherCost > 0 && (
+                            <>
+                              <dt className="text-muted-foreground">Other</dt>
+                              <dd className="text-right font-data">{formatCurrency(costs.otherCost, quote.currency)}</dd>
+                            </>
+                          )}
+                          {costs.sharedCostShare > 0 &&
+                            costs.packagingCost === 0 &&
+                            costs.shippingCost === 0 &&
+                            costs.otherCost === 0 && (
+                            <>
+                              <dt className="text-muted-foreground">Packaging / freight share</dt>
+                              <dd className="text-right font-data">{formatCurrency(costs.sharedCostShare, quote.currency)}</dd>
+                            </>
+                          )}
+                          <dt className="font-medium">Your total cost</dt>
+                          <dd className="text-right font-data font-semibold">{formatCurrency(costs.totalCost, quote.currency)}</dd>
+                        </dl>
+                      )}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs">Client price ({quote.currency})</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={itemPricing[i]?.clientPrice ?? ''}
+                            onChange={(e) =>
+                              setItemPricing({
+                                ...itemPricing,
+                                [i]: { clientPrice: e.target.value, advanceAmount: itemPricing[i]?.advanceAmount ?? '' },
+                              })
+                            }
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs">Advance (optional)</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={itemPricing[i]?.advanceAmount ?? ''}
+                            onChange={(e) =>
+                              setItemPricing({
+                                ...itemPricing,
+                                [i]: { clientPrice: itemPricing[i]?.clientPrice ?? '', advanceAmount: e.target.value },
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                      {margin != null && clientPrice > 0 && (
+                        <p className={`text-xs font-medium ${margin >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                          Margin: {formatCurrency(margin, quote.currency)}
+                        </p>
+                      )}
+                      {returnTo && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={saveProductPrice.isPending}
+                          onClick={() => saveProductPrice.mutate(i)}
+                        >
+                          {saveProductPrice.isPending ? (
+                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</>
+                          ) : (
+                            'Save price & back to list'
+                          )}
+                        </Button>
+                      )}
                     </div>
-                    <div>
-                      <Label className="text-xs">Client price</Label>
-                      <Input
-                        type="number"
-                        value={itemPricing[i]?.clientPrice ?? String(item.expectedSellingPrice ?? '')}
-                        onChange={(e) => setItemPricing({ ...itemPricing, [i]: { purchaseCost: itemPricing[i]?.purchaseCost ?? '', clientPrice: e.target.value, advanceAmount: itemPricing[i]?.advanceAmount ?? '' } })}
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Advance</Label>
-                      <Input
-                        type="number"
-                        value={itemPricing[i]?.advanceAmount ?? ''}
-                        onChange={(e) => setItemPricing({ ...itemPricing, [i]: { purchaseCost: itemPricing[i]?.purchaseCost ?? '', clientPrice: itemPricing[i]?.clientPrice ?? '', advanceAmount: e.target.value } })}
-                      />
-                    </div>
+                  )
+                })}
+                {focusItemIndex == null && (
+                  <div className="flex gap-2">
+                    <Button onClick={() => approveQuote.mutate('approved')}>Approve & Buy</Button>
+                    <Button variant="destructive" onClick={() => approveQuote.mutate('rejected')}>Reject</Button>
                   </div>
-                ))}
-                <div className="flex gap-2">
-                  <Button onClick={() => approveQuote.mutate('approved')}>Approve</Button>
-                  <Button variant="destructive" onClick={() => approveQuote.mutate('rejected')}>Reject</Button>
-                </div>
+                )}
+                {focusItemIndex != null && (
+                  <p className="text-xs text-muted-foreground">
+                    Price this product, save & return to list. Approve full request from pipeline when all products priced — or open request without product filter.
+                  </p>
+                )}
               </div>
             )}
 
@@ -428,32 +608,21 @@ export function ProcurementFormPage() {
                       Goods are purchased and ready at the {HUB_LABELS[request.target_hub]} hub.
                       Assign a client and create a shipment to start moving them to Bangladesh.
                     </p>
-                    {clientsList && clientsList.length > 0 ? (
-                      <div className="space-y-2">
-                        <Label>Assign to Client</Label>
-                        <Select
-                          value={selectedClientId || request.client_id || clientsList[0].id}
-                          onValueChange={setSelectedClientId}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select client" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {clientsList.map((c) => (
-                              <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-red-500">
-                        No clients found. Please create a client first under the Clients section.
-                      </p>
-                    )}
+                    <div className="space-y-2">
+                      <Label>Assign to client</Label>
+                      <ClientPicker
+                        value={selectedClientId || request.client_id || null}
+                        onChange={(id) => setSelectedClientId(id ?? '')}
+                        clients={clientsList ?? []}
+                        allowNone={false}
+                        noneLabel="Select a client"
+                        noneDescription="Required to create a shipment"
+                      />
+                    </div>
                     {createError && <p className="text-sm text-red-500">{createError}</p>}
                     <Button
                       onClick={() => { setCreateError(null); createShipment.mutate() }}
-                      disabled={createShipment.isPending || !clientsList?.length}
+                      disabled={createShipment.isPending || !(selectedClientId || request.client_id)}
                     >
                       {createShipment.isPending ? (
                         <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Creating…</>
@@ -470,323 +639,278 @@ export function ProcurementFormPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] flex-col gap-3">
-      <h2 className="text-xl font-bold shrink-0">New Procurement Request</h2>
+    <div className="flex h-[calc(100vh-7rem)] flex-col gap-4">
+      <PageHeader
+        title="New Procurement Request"
+        description="Describe products — hub quotes buy cost after you send. No pricing needed now."
+        className="shrink-0"
+      />
 
-      <div className="grid min-h-0 flex-1 grid-cols-[320px_1fr] gap-4 overflow-hidden">
+      <div className="grid min-h-0 flex-1 gap-4 overflow-hidden lg:grid-cols-[340px_1fr]">
 
         {/* ── Left: settings ── */}
-        <Card className="flex flex-col overflow-hidden">
-          <CardContent className="flex flex-col gap-5 overflow-y-auto p-5">
+        <Card className="flex flex-col overflow-hidden border-border/60 shadow-sm">
+          <CardContent className="flex flex-col gap-6 overflow-y-auto p-5">
 
-            <FormSection title="Request Type">
-              <div className="space-y-2">
-                {(['sourced', 'direct_buy'] as const).map((mode) => (
-                  <label key={mode} className="flex cursor-pointer gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/40">
-                    <input
-                      type="radio"
-                      name="requestMode"
-                      checked={requestMode === mode}
-                      onChange={() => setRequestMode(mode)}
-                      className="mt-1"
-                    />
-                    <div>
-                      <p className="text-sm font-semibold">{REQUEST_MODE_LABELS[mode]}</p>
-                      <p className="text-xs text-muted-foreground">{REQUEST_MODE_HINTS[mode]}</p>
-                    </div>
-                  </label>
-                ))}
-              </div>
+            <FormSection title="How to source">
+              <OptionCardGroup
+                name="request-mode"
+                value={requestMode}
+                onChange={setRequestMode}
+                options={[
+                  {
+                    value: 'sourced',
+                    label: REQUEST_MODE_LABELS.sourced,
+                    description: REQUEST_MODE_HINTS.sourced,
+                    icon: <Search className="h-5 w-5" />,
+                  },
+                  {
+                    value: 'direct_buy',
+                    label: REQUEST_MODE_LABELS.direct_buy,
+                    description: REQUEST_MODE_HINTS.direct_buy,
+                    icon: <Zap className="h-5 w-5" />,
+                  },
+                ]}
+              />
             </FormSection>
 
-            <FormSection title="Request Info">
-              <div className="space-y-1.5">
-                <Label>Title</Label>
-                <Input value={title} onChange={(e) => setTitle(e.target.value)} required />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Target Hub</Label>
-                <Select value={targetHub} onValueChange={(v) => setTargetHub(v as HubType)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {ORIGIN_HUBS.map((h) => (
-                      <SelectItem key={h} value={h}>{HUB_LABELS[h]}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Notes</Label>
-                <Textarea
-                  rows={3}
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                />
-              </div>
+            <FormSection title="Destination hub">
+              <HubDestinationPicker
+                value={targetHub}
+                onChange={setTargetHub}
+                hubs={ORIGIN_HUBS}
+              />
             </FormSection>
 
-            <FormSection title="Client & Shipment Type">
-              <div className="space-y-1.5">
-                <Label>Client <span className="text-xs text-muted-foreground">(optional)</span></Label>
-                <Select
-                  value={clientId || '__none__'}
-                  onValueChange={(v) => setClientId(v === '__none__' ? '' : v)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="None — multi-client" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">None</SelectItem>
-                    {clientsList?.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">Products tracked under this client.</p>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>Shipment Type</Label>
-                <div className="flex flex-col gap-2 pt-0.5">
-                  {(
-                    [
-                      { value: 'client_owned', label: 'Client-Owned' },
-                      { value: 'business_sourced', label: 'Business-Sourced' },
-                    ] as const
-                  ).map(({ value, label }) => (
-                    <label key={value} className="flex cursor-pointer items-center gap-2">
-                      <span
-                        className={cn(
-                          'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 transition-colors',
-                          shipmentType === value
-                            ? 'border-[var(--color-brand)]'
-                            : 'border-muted-foreground'
-                        )}
-                      >
-                        {shipmentType === value && (
-                          <span className="h-2 w-2 rounded-full bg-[var(--color-brand)]" />
-                        )}
-                      </span>
-                      <input
-                        type="radio"
-                        name="proc-shipmentType"
-                        value={value}
-                        checked={shipmentType === value}
-                        onChange={() => setShipmentType(value)}
-                        className="sr-only"
-                      />
-                      <span className="text-sm">{label}</span>
-                    </label>
-                  ))}
+            <FormSection title="Request details">
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Title</Label>
+                  <Input
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="e.g. March electronics order"
+                    className="h-9"
+                    required
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Notes</Label>
+                  <Textarea
+                    rows={2}
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Special instructions for the hub…"
+                    className="resize-none text-sm"
+                  />
                 </div>
               </div>
+            </FormSection>
+
+            <FormSection title="Ownership">
+              <OptionCardGroup
+                name="shipment-type"
+                value={shipmentType}
+                onChange={setShipmentType}
+                layout="grid"
+                size="sm"
+                options={[
+                  {
+                    value: 'client_owned',
+                    label: 'Client-Owned',
+                    description: 'Goods belong to client',
+                    icon: <User className="h-4 w-4" />,
+                  },
+                  {
+                    value: 'business_sourced',
+                    label: 'Business',
+                    description: 'Company inventory',
+                    icon: <ShoppingBag className="h-4 w-4" />,
+                  },
+                ]}
+              />
             </FormSection>
 
           </CardContent>
         </Card>
 
-        {/* ── Right: products + footer ── */}
-        <Card className="flex flex-col overflow-hidden">
-          <div className="flex items-center justify-between border-b px-5 py-3 shrink-0">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-brand)]">
-              Products
-            </h3>
+        {/* ── Right: client + products + footer ── */}
+        <Card className="flex flex-col overflow-hidden border-border/60 shadow-sm">
+          <div className="shrink-0 border-b bg-muted/10 px-5 py-4">
+            <div className="mb-1 flex items-center gap-2">
+              <User className="h-4 w-4 text-[var(--color-brand)]" />
+              <h3 className="text-sm font-semibold">Client assignment</h3>
+              <span className="text-[11px] text-muted-foreground">(optional)</span>
+            </div>
+            <p className="mb-3 text-xs text-muted-foreground">
+              Link this request to one client, or leave unassigned for multi-client orders.
+            </p>
+            <ClientPicker
+              value={clientId || null}
+              onChange={(id) => setClientId(id ?? '')}
+              clients={clientsList ?? []}
+            />
+          </div>
+
+          <div className="flex shrink-0 items-center justify-between border-b bg-muted/20 px-5 py-3">
+            <div className="flex items-center gap-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--color-brand)]/10 text-[var(--color-brand)]">
+                <Package className="h-4 w-4" />
+              </span>
+              <div>
+                <h3 className="text-sm font-semibold">Products</h3>
+                <p className="text-[11px] text-muted-foreground">{items.length} line{items.length !== 1 ? 's' : ''}</p>
+              </div>
+            </div>
             <Button
               type="button"
               variant="outline"
               size="sm"
+              className="h-8"
               onClick={() => {
                 setItems([...items, { name: '', quantity: 1, unit: 'pcs' }])
                 setQtyStrings([...qtyStrings, '1'])
               }}
             >
-              + Add Product
+              + Add product
             </Button>
           </div>
 
-          {/* Scrollable product list */}
           <div className="flex-1 overflow-y-auto p-4">
             <div className="space-y-3">
               {items.map((item, i) => (
-                <div key={i} className="space-y-3 rounded-lg border p-3">
-
-                  {/* name + qty + unit + remove */}
-                  <div className="flex items-start gap-2">
-                    <div className="flex flex-1 gap-2">
-                      <Input
-                        placeholder="Product name"
-                        value={item.name}
-                        onChange={(e) => updateItem(i, { name: e.target.value })}
-                      />
-                      <Input
-                        type="number"
-                        className="w-20"
-                        value={qtyStrings[i] ?? String(item.quantity)}
-                        onChange={(e) => setQty(i, e.target.value)}
-                      />
-                      <Input
-                        placeholder="unit"
-                        className="w-20"
-                        value={item.unit ?? ''}
-                        onChange={(e) => updateItem(i, { unit: e.target.value })}
-                      />
-                    </div>
+                <div
+                  key={i}
+                  className="overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm transition-shadow hover:shadow-md"
+                >
+                  <div className="flex items-center justify-between border-b bg-muted/30 px-4 py-2">
+                    <span className="font-data text-xs font-semibold text-muted-foreground">
+                      Product {i + 1}
+                    </span>
                     {items.length > 1 && (
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
                         onClick={() => {
                           setItems(items.filter((_, idx) => idx !== i))
                           setQtyStrings(qtyStrings.filter((_, idx) => idx !== i))
                         }}
                       >
-                        <Trash2 className="h-4 w-4 text-muted-foreground" />
+                        <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     )}
                   </div>
 
-                  {/* owner pricing — purchase cost hidden from BD */}
-                  {profile?.role === 'owner' && (
-                    <div className="grid grid-cols-2 gap-3 border-t pt-3">
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">Buy Price (USD)</Label>
+                  <div className="space-y-3 p-4">
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Input
+                        placeholder="Product name"
+                        value={item.name}
+                        onChange={(e) => updateItem(i, { name: e.target.value })}
+                        className="h-9 flex-1"
+                      />
+                      <div className="flex gap-2">
                         <Input
                           type="number"
-                          min={0}
-                          step="0.01"
-                          placeholder="Your cost"
-                          value={itemPricing[i]?.purchaseCost ?? ''}
-                          onChange={(e) =>
-                            setItemPricing({
-                              ...itemPricing,
-                              [i]: { ...itemPricing[i], purchaseCost: e.target.value, clientPrice: itemPricing[i]?.clientPrice ?? '', advanceAmount: itemPricing[i]?.advanceAmount ?? '' },
-                            })
-                          }
+                          className="h-9 w-20"
+                          value={qtyStrings[i] ?? String(item.quantity)}
+                          onChange={(e) => setQty(i, e.target.value)}
                         />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">Client Price (USD)</Label>
                         <Input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          placeholder="Charge client"
-                          value={itemPricing[i]?.clientPrice ?? item.expectedSellingPrice ?? ''}
-                          onChange={(e) =>
-                            setItemPricing({
-                              ...itemPricing,
-                              [i]: { purchaseCost: itemPricing[i]?.purchaseCost ?? '', clientPrice: e.target.value, advanceAmount: itemPricing[i]?.advanceAmount ?? '' },
-                            })
-                          }
+                          placeholder="unit"
+                          className="h-9 w-20"
+                          value={item.unit ?? ''}
+                          onChange={(e) => updateItem(i, { unit: e.target.value })}
                         />
                       </div>
                     </div>
-                  )}
 
-                  {/* deadline + selling price */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <CalendarDays className="h-3.5 w-3.5" />
-                        Deadline <span className="font-normal">(optional)</span>
-                      </Label>
-                      <Input
-                        type="date"
-                        value={item.deadline ?? ''}
-                        onChange={(e) => updateItem(i, { deadline: e.target.value || null })}
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">
-                        Selling Price (USD) <span className="font-normal">(optional)</span>
-                      </Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        placeholder="0.00"
-                        value={item.expectedSellingPrice ?? ''}
-                        onChange={(e) =>
-                          updateItem(i, {
-                            expectedSellingPrice: e.target.value ? Number(e.target.value) : null,
-                          })
-                        }
-                      />
-                    </div>
-                  </div>
-
-                  {/* source URL */}
-                  <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">Source URL</Label>
-                    <Input
-                      type="url"
-                      placeholder="https://supplier.com/product"
-                      value={item.sourceUrl ?? ''}
-                      onChange={(e) => updateItem(i, { sourceUrl: e.target.value })}
-                    />
-                  </div>
-
-                  {/* images */}
-                  <div className="flex flex-wrap gap-2">
-                    {(item.images ?? []).map((url) => (
-                      <div key={url} className="group relative h-14 w-14 overflow-hidden rounded-md border">
-                        <img src={url} alt="product" className="h-full w-full object-cover" />
-                        <button
-                          type="button"
-                          onClick={() => removeImage(i, url)}
-                          className="absolute right-0.5 top-0.5 rounded-full bg-black/60 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                          <CalendarDays className="h-3 w-3" />
+                          Deadline <span className="font-normal">(optional)</span>
+                        </Label>
+                        <DateField
+                          className="h-9"
+                          value={item.deadline ?? ''}
+                          onChange={(e) => updateItem(i, { deadline: e.target.value || null })}
+                          onClear={() => updateItem(i, { deadline: null })}
+                        />
                       </div>
-                    ))}
-                    <label className="flex h-14 w-14 cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-dashed text-muted-foreground hover:bg-accent">
-                      {uploadingIndex === i ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <ImagePlus className="h-4 w-4" />
-                      )}
-                      <span className="text-[9px]">Image</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        className="hidden"
-                        disabled={uploadingIndex !== null}
-                        onChange={(e) => {
-                          handleUpload(i, e.target.files)
-                          e.target.value = ''
-                        }}
-                      />
-                    </label>
+                      <div className="space-y-1.5">
+                        <Label className="text-[11px] text-muted-foreground">Source URL</Label>
+                        <Input
+                          type="url"
+                          className="h-9"
+                          placeholder="https://…"
+                          value={item.sourceUrl ?? ''}
+                          onChange={(e) => updateItem(i, { sourceUrl: e.target.value })}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {(item.images ?? []).map((url) => (
+                        <div key={url} className="group relative h-14 w-14 overflow-hidden rounded-lg border">
+                          <img src={url} alt="product" className="h-full w-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => removeImage(i, url)}
+                            className="absolute right-0.5 top-0.5 rounded-full bg-black/60 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                      <label className="flex h-14 w-14 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-muted-foreground/40 text-muted-foreground transition-colors hover:border-[var(--color-brand)]/40 hover:bg-muted/50">
+                        {uploadingIndex === i ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <ImagePlus className="h-4 w-4" />
+                        )}
+                        <span className="text-[9px]">Photo</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          className="hidden"
+                          disabled={uploadingIndex !== null}
+                          onChange={(e) => {
+                            handleUpload(i, e.target.files)
+                            e.target.value = ''
+                          }}
+                        />
+                      </label>
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Pinned footer */}
-          <div className="border-t px-5 py-3 shrink-0 space-y-2">
-            {saveError && (
-              <p className="text-xs text-red-500">{saveError}</p>
-            )}
-            <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={() => { setSaveError(null); saveRequest.mutate('draft') }}
-              disabled={saveRequest.isPending}
-            >
-              Save Draft
-            </Button>
-            <Button
-              onClick={() => { setSaveError(null); saveRequest.mutate('sent') }}
-              disabled={saveRequest.isPending}
-            >
-              {saveRequest.isPending
-                ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Sending…</>
-                : 'Send to Hub'}
-            </Button>
+          <div className="shrink-0 space-y-2 border-t bg-muted/10 px-5 py-4">
+            {saveError && <p className="text-xs text-red-500">{saveError}</p>}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                className="flex-1 sm:flex-none"
+                onClick={() => { setSaveError(null); saveRequest.mutate('draft') }}
+                disabled={saveRequest.isPending}
+              >
+                Save draft
+              </Button>
+              <Button
+                className="flex-1 sm:flex-none"
+                onClick={() => { setSaveError(null); saveRequest.mutate('sent') }}
+                disabled={saveRequest.isPending}
+              >
+                {saveRequest.isPending
+                  ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Sending…</>
+                  : 'Send to hub'}
+              </Button>
             </div>
           </div>
         </Card>
@@ -798,8 +922,8 @@ export function ProcurementFormPage() {
 
 function FormSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="space-y-4">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-brand)]">
+    <section className="space-y-3">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         {title}
       </h3>
       {children}

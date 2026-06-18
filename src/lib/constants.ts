@@ -1,4 +1,4 @@
-import type { HubType, ProcurementStatus, ShipmentItemStatus, ShipmentStatus, UserRole } from '@/types/database'
+import type { HubType, ProcurementStatus, ShipmentItemStatus, ShipmentStatus, ShipmentType, UserRole } from '@/types/database'
 
 export const HUB_LABELS: Record<HubType, string> = {
   dubai: 'Dubai',
@@ -64,6 +64,16 @@ export const SHIPMENT_STATUS_ORDER: ShipmentStatus[] = [
   'out_for_delivery',
   'delivered',
 ]
+
+export const SHIPMENT_TYPE_LABELS: Record<ShipmentType, string> = {
+  client_owned: 'Client-Owned',
+  business_sourced: 'Business',
+}
+
+export const SHIPMENT_TYPE_HINTS: Record<ShipmentType, string> = {
+  client_owned: 'Goods belong to client',
+  business_sourced: 'Company inventory',
+}
 
 export const ORIGIN_HUBS: HubType[] = ['dubai', 'china']
 

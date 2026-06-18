@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { DateField } from '@/components/ui/date-field'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { ShipmentStatusBadge } from '@/components/StatusBadge'
@@ -253,11 +253,11 @@ function OwnerShipmentControls({ shipment }: { shipment: Shipment }) {
         <div className="space-y-1.5">
           <Label className="text-xs">Sail Date</Label>
           <div className="flex gap-2">
-            <Input
-              type="date"
+            <DateField
               value={shipDate}
               onChange={(e) => setShipDate(e.target.value)}
               className="h-8 text-xs"
+              showClear={false}
             />
             <PasswordConfirmDialog
               trigger={

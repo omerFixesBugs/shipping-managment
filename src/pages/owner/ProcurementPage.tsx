@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Search, ShoppingCart } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -15,6 +15,7 @@ import type { ProcurementRequest } from '@/types/database'
 
 export function ProcurementPage() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [selectedRow, setSelectedRow] = useState<ProcurementProductRow | null>(null)
 
@@ -102,6 +103,7 @@ export function ProcurementPage() {
           rows={productRows}
           isLoading={isLoading}
           onProductClick={setSelectedRow}
+          onSectionClick={(section) => navigate(`/owner/procurement/status/${section.status}`)}
           showHub
           hideEmptyColumns={search.trim().length > 0}
           emptyMessage={
@@ -124,8 +126,13 @@ export function ProcurementPage() {
         row={selectedRow}
         open={!!selectedRow}
         onOpenChange={(open) => !open && setSelectedRow(null)}
-        manageHref={selectedRow ? `/owner/procurement/${selectedRow.request.id}` : '#'}
+        manageHref={
+          selectedRow
+            ? `/owner/procurement/${selectedRow.request.id}?item=${selectedRow.itemIndex}`
+            : '#'
+        }
         showHub
+        showQuickApprove
         canDelete
         onDelete={deleteProduct}
       />

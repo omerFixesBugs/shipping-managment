@@ -9,6 +9,7 @@ import { NotificationsPage } from '@/pages/NotificationsPage'
 import { OwnerDashboard } from '@/pages/owner/OwnerDashboard'
 import { ClientsPage } from '@/pages/owner/ClientsPage'
 import { ProcurementPage } from '@/pages/owner/ProcurementPage'
+import { ProcurementStatusListPage } from '@/pages/owner/ProcurementStatusListPage'
 import { ProcurementFormPage } from '@/pages/owner/ProcurementFormPage'
 import { ShipmentsPage } from '@/pages/owner/ShipmentsPage'
 import { ShipmentFormPage } from '@/pages/owner/ShipmentFormPage'
@@ -74,6 +75,14 @@ export default function App() {
                 element={
                   <ProtectedRoute allowedRoles={['owner']}>
                     <ProcurementPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/owner/procurement/status/:status"
+                element={
+                  <ProtectedRoute allowedRoles={['owner']}>
+                    <ProcurementStatusListPage />
                   </ProtectedRoute>
                 }
               />

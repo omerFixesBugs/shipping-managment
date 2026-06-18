@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { DateField } from '@/components/ui/date-field'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -203,10 +204,10 @@ export function AddShipmentDialog({ open, onOpenChange, onSuccess }: Props) {
             </div>
             <div className="space-y-1.5">
               <Label>Planned Ship Date</Label>
-              <Input
-                type="date"
+              <DateField
                 value={form.shipDate}
                 onChange={(e) => set('shipDate', e.target.value)}
+                showClear={false}
               />
             </div>
           </section>

@@ -24,7 +24,7 @@ export async function syncProductPricing(
       client_id: clientId,
       product_name: item.name,
       purchase_cost: p?.purchaseCost ?? null,
-      client_price: p?.clientPrice ?? item.expectedSellingPrice ?? 0,
+      client_price: p?.clientPrice ?? 0,
       advance_amount: p?.advanceAmount ?? 0,
       currency: p?.currency ?? 'USD',
     }
@@ -40,16 +40,16 @@ export async function syncProductPricing(
 
 export const REQUEST_MODE_LABELS: Record<ProcurementRequestMode, string> = {
   sourced: 'Sourced — Quote & Approve',
-  direct_buy: 'Direct Buy — Owner Sets Price',
+  direct_buy: 'Direct Buy — Hub Quotes, Owner Approves',
 }
 
 export const REQUEST_MODE_HINTS: Record<ProcurementRequestMode, string> = {
   sourced:
-    'Hub quotes product cost. Owner approves pricing. Client advance can be recorded on approval.',
+    'No pricing on request. Hub quotes buy cost per product. Owner sets client price when approving.',
   direct_buy:
-    'Owner sets buy & sell price upfront. Hub confirms availability, purchases, and stores. Shipping/packaging added at dispatch.',
+    'No pricing on request. Hub quotes buy cost. Owner sets client price on approval, then hub purchases.',
 }
 
-export function hubSkipsQuote(mode: ProcurementRequestMode | undefined) {
-  return mode === 'direct_buy'
+export function hubSkipsQuote(_mode: ProcurementRequestMode | undefined) {
+  return false
 }
